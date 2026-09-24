@@ -253,6 +253,10 @@ CLI 等价:`dsh-md-convert assemble <plan.json> [--review]`(全绿退出 0,有 f
 - 进程异常退出时,`exit`/信号钩子兜底清理,下次运行自动清扫历史残留
 - v0.6.0 并行 OCR:页 PNG 由 Python 侧临时目录自管理(运行结束自动清理);输出目录旁的
   `<名>.md`(逐页增量)、`<名>.state.json`(断点状态)、`<名>.progress.json`(进度镜像)为持久产物,支持续跑与观测
+- **断点状态所有权**:`.state.json` 由 Python 侧**独占写**(断点权威:pdf/scale/total 匹配校验 + 原子落盘),
+  Node 消费端只读;Node 侧的逐页进度(含 stats 聚合)另写 `.progress.json` 镜像。
+  两侧不互写同一文件——双写会在原子替换窗口竞态损坏,这是有意的设计归属
+- vision 工作目录 `<名>.vision/`(PNG/plan/提示词/批次产出)持久保留,供复查与再装配;确认无需复查后可整目录删除
 - 调试可用 `--keep-temp` 保留中间文件
 
 ## 测试

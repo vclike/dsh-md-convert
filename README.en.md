@@ -12,8 +12,8 @@ Convert Office documents and PDFs (including scanned ones) to Markdown with **st
 | Input | Pipeline | Notes |
 | --- | --- | --- |
 | `.docx` / `.xlsx` / `.pptx` | MarkItDown direct | Headings/lists/tables/paragraphs kept as Markdown |
-| `.pdf` (with text layer) | MarkItDown direct | Falls back to **routing OCR** automatically when the text layer is empty |
-| `.pdf` (scanned) | **Routing OCR** (PP-DocLayout-L layout + RapidOCR text / SLANet tables / FormulaNet formulas) | Headings/body/tables/formulas/stamps, CPU-only, lightweight models |
+| `.pdf` (with text layer) | MarkItDown direct | Enters the **three-tier scanned routing** automatically when the text layer is empty |
+| `.pdf` (scanned) | **Three-tier engine routing** (v0.6.0): ① complexity probe samples 3 pages → ② table/formula ratio over threshold → vision briefs, otherwise ③ **page-parallel local OCR** (NDJSON streaming + resume, any page count) | Headings/body/tables/formulas/stamps, CPU-only, lightweight models; long documents no longer bound to a single synchronous call |
 | `.doc` / `.xls` / `.ppt` | WPS/Office COM (Windows) or LibreOffice (other platforms) re-save to modern format → MarkItDown | Backend auto-detected, configurable |
 | `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / direct read | Everything MarkItDown supports |
 
@@ -50,6 +50,25 @@ dsh plugin --profile web add github:yakoylp/dsh-md-convert
 
 After installing, restart `dsh web`; the agent gains the `md_convert` tool. The `dsh-md-convert` CLI command is exposed via the profile's `node_modules/.bin`.
 
+### Background-job deployment (v0.6.0; required for unattended long OCR)
+
+With `background=auto|true`, OCR-class long tasks run as **ctx.jobs background jobs**: the call
+returns `{ok, background:true, jobId, etaSec}` immediately; poll with `job_output(jobId)`;
+`job_kill` cancels (process tree killed, finished pages kept in `.state.json`, resumable).
+
+**Prerequisite**: load the official job controllers into the composition:
+
+```sh
+dsh plugin --profile web add github:deepseek-ai/dsh-jobs
+dsh plugin --profile web add github:deepseek-ai/dsh-tool-jobs
+```
+
+**Graceful fallback**: without these controllers, `background=auto|true` **does not fail** —
+it falls back to foreground execution with `background:false` plus a warning. The foreground
+path still streams incremental writes (`.md` per page + `.state.json` checkpoints) and honors
+`exec.signal`, but stays bound to a single call's lifetime — **install the controllers for
+long documents**.
+
 ### Standalone CLI (without DSH)
 
 ```sh
@@ -73,8 +92,23 @@ dsh-md-convert old.doc old.xls old.ppt -o ./md
 # Force a specific legacy backend
 dsh-md-convert old.doc -o ./md --legacy-backend wps
 
-# Scanned PDF: automatic routing OCR (deps auto-installed if missing)
+# Scanned PDF: automatic three-tier routing (complexity probe → vision briefs / page-parallel OCR; deps auto-installed)
 dsh-md-convert scan.pdf -o ./md
+
+# v0.6.0: background mode (prints jobId immediately, per-page progress on stderr, .md/.progress.json pollable)
+dsh-md-convert convert scan.pdf -o ./md --background true --workers 2
+
+# v0.6.0: resume from checkpoints (skip finished pages, retry failed ones only)
+dsh-md-convert convert scan.pdf -o ./md --resume
+
+# v0.6.0: force an engine (skips the probe)
+dsh-md-convert convert scan.pdf -o ./md --engine local     # or --engine vision
+
+# --workers 1: in-process fast path, no process pool (sandboxes/containers without named pipes)
+dsh-md-convert convert scan.pdf -o ./md --workers 1
+
+# v0.6.0: assemble vision batch outputs into the final Markdown (+ integrity checks)
+dsh-md-convert assemble "md/scan.vision/plan.json" [--review]
 
 # Pin a Python interpreter (multi-Python setups)
 dsh-md-convert scan.pdf -o ./md --ocr-python "C:\path\to\python.exe"
@@ -97,8 +131,11 @@ Every failure carries a **stable error code** so callers (CLI / agent tool / SDK
 | `E_MARKITDOWN` | MarkItDown conversion failed | Usually corrupt/encrypted file; retry once |
 | `E_LEGACY_CONVERT` | Legacy re-save failed (COM/LibreOffice) | WPS/Office on Windows, LibreOffice elsewhere; built-in retry on busy |
 | `E_OCR_DEPS` | OCR deps missing (install failed/disabled) | Run `dsh-md-convert deps` |
-| `E_OCR_RUN` | Routing OCR execution failed | Retry, or lower `--ocr-scale` |
+| `E_OCR_RUN` | OCR execution failed (process-level/fatal) | Finished pages kept in `.state.json`; resume with `--resume` |
+| `E_OCR_TIMEOUT` | Foreground OCR/probe timed out (background jobs are unbounded) | Pages already persisted; resume with `--resume` |
 | `E_OCR_EMPTY` | Scanned page yielded no text | Check scan quality |
+| `E_VISION_PLAN` | Vision-brief pipeline failed | Check vision config; or fall back to `engine=local` |
+| `E_ASSEMBLE` | Assembly failed (plan corrupt/invalid/non-UTF-8) | Regenerate the plan; check batch output encodings |
 | `E_OUTPUT` | Output write failed | Check outDir permission/disk |
 | `E_UNKNOWN` | Any other error | Read the error message |
 
@@ -118,24 +155,60 @@ After installing the plugin, agents can use the `md_convert` tool:
 
 ```
 md_convert({ file: "report.docx", outDir: "./md" })
-→ { ok: true, output: "./md/report.md", chain: "markitdown", warnings: [] }
+→ { ok: true, background: false, output: "./md/report.md", chain: "markitdown", warnings: [] }
+
+md_convert({ file: "97-page-scan.pdf", background: "auto" })
+→ { ok: true, background: true, jobId: "…", etaSec: 404,
+    statePath: "…/97-page-scan.state.json", progressPath: "…/97-page-scan.progress.json" }
+// poll: job_output(jobId); cancel: job_kill(jobId) (finished pages kept, resumable)
+
+md_convert({ file: "scan.pdf", resume: true })            // resume from checkpoints
+md_convert({ file: "scan.pdf", engine: "vision" })        // force vision briefs
 ```
 
-Plugin config (`cordis.patch.yml`):
+**Parameters** (`background`/`engine` default from plugin config):
+
+| Param | Values | Notes |
+| --- | --- | --- |
+| `file` | path (required) | Source file |
+| `outDir` | dir | Output directory (default: plugin config or session workspace) |
+| `forceOcr` | boolean | Force the OCR route for PDFs |
+| `background` | `auto`(default)/`true`/`false` | OCR-class long tasks run as background jobs; **falls back to foreground with a warning when controllers are missing — never fails**; fast text-layer paths stay synchronous |
+| `engine` | `auto`(default)/`local`/`vision` | Scanned-PDF engine; auto = complexity-probe routing (table/formula ratio over threshold → vision) |
+| `resume` | boolean | Resume from `.state.json`: skip finished pages, retry failed ones only |
+
+Second tool: `md_convert_assemble({ planPath, review? })` — validates vision batch outputs
+(anchor coverage 1..N, no duplicates/cross-batch anchors, strict UTF-8, mojibake signatures,
+very-short pages), merges the final Markdown, and with `review:true` emits a recheck brief
+pointing at the original PNGs. CLI equivalent: `dsh-md-convert assemble <plan.json> [--review]`.
+
+Plugin config (`cordis.patch.yml`, validated by Schemastery, no hardcoding):
 
 ```yaml
 - insert:
     - id: dsh-md-convert
       name: dsh-md-convert
       config:
-        outDir: ""            # output dir; empty = session workspace
-        forceOcr: false       # force OCR for PDFs
-        ocrScale: 2           # PDF render scale
-        autoInstallDeps: true # auto pip-install missing OCR deps
+        outDir: ""              # output dir; empty = session workspace
+        forceOcr: false         # force OCR for PDFs
+        ocrScale: 2             # PDF render scale
+        autoInstallDeps: true   # auto pip-install missing OCR deps
+        background: "auto"      # background jobs for OCR-class tasks: auto | true | false
+        engine: "auto"          # scanned-PDF engine routing: auto | local | vision
         ocr:
-          python: ""          # Python interpreter (empty = auto-detect)
+          python: ""            # Python interpreter (empty = auto-detect)
+          workers: 0            # parallel workers; 0 = default min(CPU,8); 1 = in-process fast path (sandbox/containers)
+          probeTimeoutMs: 120000
+          runTimeoutMs: 7200000 # foreground OCR timeout (background jobs unbounded)
+          etaPerPageSec: 15     # ETA estimate per page
+        vision:
+          pagesThreshold: 0     # optional forced switch gate (page count); 0 = complexity-only routing
+          complexityRatio: 0.4  # table+formula region ratio threshold for the vision switch
+          batchSize: 8          # pages per vision batch
+          renderScale: 2        # vision PNG render scale (≈144dpi)
+          promptTemplate: ""    # custom prompt template path (empty = built-in lib/py/prompts/vision-ocr.md)
         legacy:
-          backend: "auto"     # auto | wps | office | libreoffice (auto: COM on Windows, LibreOffice elsewhere)
+          backend: "auto"       # auto | wps | office | libreoffice
 ```
 
 ## Legacy format backends
@@ -153,21 +226,44 @@ Use `--legacy-backend wps | office | libreoffice` to force a specific backend (e
 
 - Each conversion uses a dedicated temp dir (`%TEMP%/dsh-md-convert-*`), removed when done
 - On abnormal exit, `exit`/signal hooks clean up; the next run sweeps any leftovers
-- OCR produces no intermediate files (done in Python memory); use `--keep-temp` for debugging
+- v0.6.0 parallel OCR: page PNGs are managed by the Python-side temp dir (auto-cleaned);
+  persistent artifacts live next to the output — `<name>.md` (incremental per page),
+  `<name>.state.json` (checkpoint state), `<name>.progress.json` (progress mirror)
+- **Checkpoint ownership**: `.state.json` is written **exclusively by the Python side**
+  (authoritative: pdf/scale/total matching + atomic writes); the Node consumer only reads it.
+  Node writes its per-page progress (with aggregated stats) to the separate `.progress.json`
+  mirror. The two sides never write the same file — double writers would race on the atomic
+  replace window; this ownership split is deliberate
+- The vision work dir `<name>.vision/` (PNGs/plan/prompts/batch outputs) persists for review
+  and re-assembly; delete it once no recheck is needed
+- Use `--keep-temp` to keep intermediate files for debugging
 
 ## Tests
 
 ```sh
-npm test                       # unit tests (backend split, LibreOffice mock)
-node test/run-smoke.mjs        # smoke across 7 formats (Windows: WPS/Office; Linux: LibreOffice)
-node test/run-smoke.mjs --all --reference   # all 8 formats (incl. scanned OCR) and write reference outputs to test/fixtures/final-out/
+npm test                       # unit tests: node --test (routing thresholds / NDJSON parsing & anchor
+                               # upsert / state.json resume / background-job outcome contract / graceful
+                               # degradation / batch splitting / mojibake rules / assembly & review)
+node lib/cli.js convert test/fixtures/sample3.pdf -o .tmp/smoke --force-ocr --background true --workers 1
+                               # 3-page pure-image fixture smoke: prints jobId immediately → progress → anchors complete
+                               # (workers 1 = in-process fast path; named-pipe-free for sandboxes/containers)
 ```
+
+> Multi-worker (`--workers 2`) uses a multiprocessing.Pool and needs named pipes;
+> in restricted environments use `--workers 1` (semantically equal to Pool(1)).
+> The spawnStream direct test auto-skips in pipe-less environments and runs for real on deployment.
 
 ## Known issues
 
+- **v0.6.0**: real Pool parallelism and the ctx.jobs background chain are pending deployment-phase
+  verification — development sandboxes forbid named pipes (`--workers 2+` and piped node→python
+  spawns fail with EPERM there; pipe=EPERM vs inherit=OK has been scoped, not a code defect).
+  Deployment verification: `dsh-md-convert convert scan.pdf -o ./md --background true --workers 2`
+  (97 pages ≈ 6-7 min, ETA calibrated 400-420s).
 - **paddlepaddle ≥3.3 has a oneDNN/PIR static-graph incompatibility** that crashes inference; the plugin
   disables it automatically (`FLAGS_use_mkldnn=0` + `enable_mkldnn=False`), no manual action needed.
-- Scanned-PDF OCR quality depends on page clarity; for complex layouts / tiny text raise `--ocr-scale` (e.g. 3) — accuracy improves, time increases.
+- Scanned-PDF OCR quality depends on page clarity; for complex layouts / tiny text raise `--ocr-scale`
+  (e.g. 3) or route to `engine:"vision"` — accuracy improves, time/cost increases.
 
 ## Limitations
 

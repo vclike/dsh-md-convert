@@ -7,12 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 import { executeConvert } from "../lib/index.js";
-
-/** 真实存在的纯图 fixture(engine=vision 接缝测试用;存在性门先于引擎路由) */
-const FIXTURE_PDF = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "sample3.pdf");
 
 function makeCtx(jobs) {
 	return { get: (k) => (k === "jobs" ? jobs : undefined) };
@@ -77,17 +72,21 @@ test("executeConvert: background=auto + jobs 在 → 后台启动 {ok,background
 	const p = jobs.started[0];
 	assert.equal(p.kind, "md-convert");
 	assert.ok(p.label.includes("missing.pdf"));
-	// 作业体:runFn 里 convertFile 对缺失文件 → done 收敛为失败结果(永不 reject)
+	// 作业体:runFn 里 convertFile 对缺失文件 → done 结算为 failed JobOutcome(永不 reject)
 	const view = p.run();
 	const outcome = await view.done;
-	assert.equal(outcome.ok, false);
-	assert.equal(outcome.code, "E_FILE_NOT_FOUND");
+	assert.equal(outcome.status, "failed");
+	assert.ok(outcome.detail.includes("E_FILE_NOT_FOUND"));
 });
 
-test("executeConvert: engine=vision 显式指定 → vision 接缝(E_VISION_PLAN,t3 未装时)", async () => {
+test("executeConvert: engine=vision 显式指定 → vision 链路确定性失败(E_VISION_PLAN,环境无关)", async () => {
 	const ws = tmpWorkspace("vision");
+	// F6:用「存在但非合法 PDF」保证渲染在任何环境必败——此前依赖沙箱缺 python 才通过,
+	// 在完整依赖机器上会真实渲染成功导致断言失败。存在性门先于引擎路由,故文件必须真实存在。
+	const badPdf = join(ws, "bad.pdf");
+	writeFileSync(badPdf, "这不是 PDF 内容,render_pages.py 会确定性打开失败。", "utf8");
 	const r = await executeConvert(
-		{ file: FIXTURE_PDF, engine: "vision", forceOcr: true, background: "false" },
+		{ file: badPdf, engine: "vision", forceOcr: true, background: "false" },
 		makeExec(ws), makeCtx(null), { ocr: {}, vision: {} },
 	);
 	assert.equal(r.ok, false);

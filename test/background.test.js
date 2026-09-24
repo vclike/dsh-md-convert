@@ -7,7 +7,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { startBackgroundConvert } from "../lib/core/jobs.js";
-import { ERROR_CODES } from "../lib/core/errors.js";
 
 function stubJobs() {
 	const started = [];
@@ -39,19 +38,31 @@ test("startBackgroundConvert: 正常启动 → {jobId,etaSec} + 契约三件套"
 	assert.equal(typeof view.cancel, "function");
 	assert.equal(typeof view.readOutput, "function");
 	assert.ok(typeof view.done.then === "function");
-	assert.ok(view.readOutput().text.includes("md_convert 后台作业"));
+	// F2:readOutput 契约必须返回 string(对象会被 job_output 渲染成 [object Object])
+	assert.equal(typeof view.readOutput(), "string");
+	assert.ok(view.readOutput().includes("md_convert 后台作业"));
 
+	// F1:done 必须结算为合法 JobOutcome{status,detail,output}——
+	// 注册表 settle()/isTerminal 只认 status 三值,缺省=作业永非终态
 	const outcome = await view.done;
-	assert.deepEqual(outcome, {
-		ok: true,
-		code: undefined,
-		output: "out/doc.md",
-		chain: "parallel-ocr",
-		warnings: ["w1"],
-		error: undefined,
-		mode: undefined,
-		background: false,
+	assert.equal(outcome.status, "completed");
+	assert.equal(outcome.output, "out/doc.md");
+	assert.ok(outcome.detail.includes("out/doc.md"));
+	assert.ok(outcome.detail.includes("parallel-ocr"));
+	assert.ok(outcome.detail.includes("1 条警告"));
+});
+
+test("startBackgroundConvert: runFn 返回 cancelled → JobOutcome.status=killed", async () => {
+	const jobs = stubJobs();
+	const ctx = { get: (k) => (k === "jobs" ? jobs : undefined) };
+	startBackgroundConvert({
+		ctx, exec: undefined, label: "l",
+		runFn: async () => ({ ok: false, cancelled: true, error: "OCR 已取消(进程树已终止)" }),
 	});
+	const view = jobs.started[0].run();
+	const outcome = await view.done;
+	assert.equal(outcome.status, "killed");
+	assert.ok(outcome.detail.includes("已取消"));
 });
 
 test("startBackgroundConvert: owner 透传 exec.agent", () => {
@@ -78,7 +89,7 @@ test("startBackgroundConvert: cancel 触发任务自有 controller(不影响外�
 	assert.equal(outerSignal.aborted, false);
 });
 
-test("startBackgroundConvert: runFn 抛异常 → done 收敛为结果对象(永不 reject)", async () => {
+test("startBackgroundConvert: runFn 抛异常 → done 收敛为 failed JobOutcome(永不 reject)", async () => {
 	const jobs = stubJobs();
 	const ctx = { get: () => jobs };
 	startBackgroundConvert({
@@ -87,9 +98,9 @@ test("startBackgroundConvert: runFn 抛异常 → done 收敛为结果对象(永
 	});
 	const view = jobs.started[0].run();
 	const outcome = await view.done; // 不得 reject
-	assert.equal(outcome.ok, false);
-	assert.equal(outcome.code, ERROR_CODES.E_UNKNOWN);
-	assert.ok(outcome.error.includes("boom"));
+	assert.equal(outcome.status, "failed");
+	assert.ok(outcome.detail.includes("[E_UNKNOWN]"));
+	assert.ok(outcome.detail.includes("boom"));
 });
 
 test("startBackgroundConvert: jobs 服务缺失 → null(优雅降级)", () => {

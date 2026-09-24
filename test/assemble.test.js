@@ -80,6 +80,27 @@ test("detectMojibake: U+FFFD/锟斤拷/Latin-1 串三类特征", () => {
 	assert.ok(onlyFffd.hits.some((h) => h.name.includes("U+FFFD")));
 });
 
+test("detectMojibake: F4 反例——间隔号人名/正常文本不得误报(评审实证用例)", () => {
+	for (const text of ["哈利·波特与魔法石", "亨利·基辛格论中国", "章节 3·2 实施要点", "完全正常的中文内容,无任何乱码。"]) {
+		const r = detectMojibake(text);
+		assert.equal(r.suspect, false, `合法文本被误报:${text} → ${JSON.stringify(r.hits)}`);
+	}
+	// 真阳性仍命中
+	assert.equal(detectMojibake("锟斤拷锟斤拷乱码文本").suspect, true, "GBK 双编真阳性");
+	assert.equal(detectMojibake("前缀ä¸­æ–‡后缀").suspect, true, "UTF-8 字节按单字节误读真阳性");
+});
+
+test("assemblePlan: F4 集成反例——间隔号人名页不产生疑似乱码 finding", async () => {
+	const ws = tmpWorkspace("harry");
+	const { planPath } = buildFixture(ws, {
+		contentOf: (p) => `第${p}页:《哈利·波特与魔法石》《亨利·基辛格论中国》等合法译名,章节 3·2 实施要点,无任何乱码。`,
+	});
+	const r = await assemblePlan({ planPath });
+	assert.equal(r.ok, true);
+	assert.deepEqual(r.coverage, { found: 6, total: 6 });
+	assert.equal(r.findings.filter((f) => f.problem === "疑似乱码").length, 0, "合法间隔号文本不得注入乱码 finding");
+});
+
 test("visibleLength: 剥离注释与锚点;极短判据", () => {
 	const block = pageBlock(9, "<!-- 印章 -->正文八个字");
 	assert.equal(visibleLength(block), "正文八个字".length);

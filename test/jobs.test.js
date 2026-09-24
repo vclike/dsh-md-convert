@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assembleMd, createOcrRun, estimateEtaSec, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
@@ -24,8 +24,8 @@ function pageBlock(no, body) {
  * 假 spawn 流:脚本化事件序列(makeFake),复刻真实 spawnStream 的完整契约:
  *   (cmd, args, {onLine, signal, timeoutMs}) → {promise, killTree}
  *   - lines 全部发出后以 exitCode 结案(holdExit=true 时挂起,仅 killTree 可结案);
- *   - signal 中止 → killTree;timeoutMs 到期 → killTree(真实实现同样以 killTree 收口,
- *     timedOut 由 killTree 结案载荷携带);
+ *   - signal 中止 → killTree(false);timeoutMs 到期 → killTree(true);
+ *     (F8 保真度:真实 spawnStream 仅超时路径置 timedOut,中止路径不含该标记)
  *   - createOcrRun 侧按 signal.aborted 优先分派 cancelled,再判 timedOut。
  * 注意:测试内计时器一律不 unref,保持事件循环存活直至断言完成。
  */
@@ -36,18 +36,18 @@ function makeFake(script) {
 		const api = {
 			cmd, args, killed: false,
 			promise,
-			killTree() {
+			killTree(timedOut = true) {
 				if (api.killed) return;
 				api.killed = true;
-				script.onKill?.();
-				doResolve({ status: 1, signal: "SIGKILL", stderrTail: "terminated", timedOut: true });
+				script.onKill?.(timedOut);
+				doResolve({ status: 1, signal: "SIGKILL", stderrTail: "terminated", timedOut });
 			},
 		};
 		if (signal) {
-			if (signal.aborted) api.killTree();
-			else signal.addEventListener("abort", () => api.killTree(), { once: true });
+			if (signal.aborted) api.killTree(false);
+			else signal.addEventListener("abort", () => api.killTree(false), { once: true });
 		}
-		if (timeoutMs > 0) setTimeout(() => api.killTree(), timeoutMs);
+		if (timeoutMs > 0) setTimeout(() => api.killTree(true), timeoutMs);
 		let t = 0;
 		for (const step of script.lines) {
 			t += step.delay;
@@ -103,7 +103,7 @@ test("assembleMd: 页号升序拼装 + 标题", () => {
 
 /* ---------------- ETA 标定(bench.md) ---------------- */
 
-test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间", () => {
+test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按实际核数(F5)", () => {
 	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)
 	assert.equal(estimateEtaSec(97, 1, 15), 1455);
 	// workers=4: 线性 364 + 开销 40 = 404 ∈ captain 标定区间 400-420s
@@ -114,8 +114,10 @@ test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开�
 	assert.equal(estimateEtaSec(0, 4), null);
 	assert.equal(estimateEtaSec(-1, 4), null);
 	assert.equal(estimateEtaSec(null, 4), null);
-	// workers=0 视作 1
-	assert.equal(estimateEtaSec(10, 0, 15), 150);
+	// F5: workers=0 → 按实际将用口径 min(CPU,8) 估算(不再视作单 worker 系统性高估)
+	const eff = Math.min(os.cpus()?.length || 4, 8);
+	assert.equal(estimateEtaSec(97, 0, 15), Math.ceil((97 * 15) / eff) + (eff > 1 ? 40 : 0));
+	assert.ok(estimateEtaSec(97, 0, 15) < estimateEtaSec(97, 1, 15), "多核默认口径必须低于单 worker 口径");
 });
 
 /* ---------------- createOcrRun ---------------- */
@@ -234,6 +236,42 @@ test("createOcrRun: signal 中止 → 进程树终止 + cancelled", async () => 
 	assert.equal(r.cancelled, true);
 	assert.equal(r.ok, false);
 	assert.ok(r.error.includes("resume"));
+	// F8 保真度:中止路径不得携带 timedOut 标记(仅超时路径置位)
+	assert.equal(r.timedOut, undefined);
+});
+
+test("createOcrRun: F3 收尾对账——state 标 done 而 md 缺页 → warning + progress 标注(防静默丢页)", async () => {
+	const dir = tmpDir("recon");
+	const mdPath = join(dir, "doc.md");
+	const statePath = join(dir, "doc.state.json");
+	const progressPath = join(dir, "doc.progress.json");
+	// 预置 Python 侧断点状态:页 1/2/3 均标记 done(模拟在途事件丢失窗口后的状态)
+	writeFileSync(statePath, JSON.stringify({ pdf: "doc.pdf", total: 3, scale: 2, pages: { 1: "done", 2: "done", 3: "done" }, pageWarnings: {} }), "utf8");
+	// 本轮仅重发页 1(fake 不重写 state,预置状态保持原样)——页 2/3 即「state=done 而 md 无页」
+	const script = {
+		lines: [
+			{ delay: 2, line: line({ event: "start", total: 3 }) },
+			{ delay: 2, line: line({ event: "page", no: 1, md: pageBlock(1, "仅此页到达"), stats: {} }) },
+			{ delay: 2, line: line({ event: "done", warnings: [] }) },
+		],
+	};
+	const r = await createOcrRun({
+		python: "python", script: "p.py", pdf: "doc.pdf",
+		mdPath, statePath, progressPath,
+		title: "# doc", resume: true, spawnStreamImpl: makeFake(script),
+	});
+	assert.equal(r.ok, true, "对账属警告级,不判致命");
+	const reconWarning = (r.warnings ?? []).find((w) => w.includes("对账发现"));
+	assert.ok(reconWarning, "必须产出对账 warning");
+	assert.ok(reconWarning.includes("第 2、3 页"));
+	assert.ok(reconWarning.includes("全新重跑"), "必须给出恢复指引(resume 会跳过 done 页)");
+	// progress 镜像同步标注
+	const progress = JSON.parse(readFileSync(progressPath, "utf8"));
+	assert.deepEqual(progress.reconciliation.missingInMd, [2, 3]);
+	// 收尾写盘已原子化:md 内容完整可解析(非截断)
+	const md = readFileSync(mdPath, "utf8");
+	assert.ok(md.includes("仅此页到达"));
+	assert.ok(md.startsWith("# doc"));
 });
 
 test("createOcrRun: 超时 → E_OCR_TIMEOUT(无 signal 场景)", async () => {
@@ -313,4 +351,39 @@ test("createOcrRun: --resume 传给 Python 且 workers 透传", async () => {
 	assert.equal(captured.args[captured.args.indexOf("--workers") + 1], "3");
 	assert.equal(captured.args[captured.args.indexOf("--scale") + 1], "2");
 	assert.equal(captured.cmd, "py.exe");
+});
+
+/* ---------------- spawnStream 本体直测(F8;真实子进程,受限沙箱自动跳过) ---------------- */
+
+test("spawnStream 直测:分帧/超时/终止(禁管道环境自动 skip,部署阶段真跑)", async (t) => {
+	const { spawnStream } = await import("../lib/core/jobs.js");
+	// 环境探针:能否 spawn 带管道 stdio 的子进程(sandbox EPERM → skip)
+	const probe = spawnStream(process.execPath, ["-e", "process.stdout.write('ok\\n')"], { onLine: () => {} });
+	const probeResult = await probe.promise;
+	if (probeResult.error && /EPERM/i.test(probeResult.error)) {
+		t.skip("当前环境禁命名管道(开发沙箱);部署阶段(dsh web 进程)自动真跑");
+		return;
+	}
+	assert.equal(probeResult.status, 0, `环境探针应正常退出:${JSON.stringify(probeResult).slice(0, 200)}`);
+
+	// ① 分帧:三行协议逐行回调
+	const lines = [];
+	const frame = spawnStream(process.execPath, ["-e", "for (const l of ['{\\\"a\\\":1}','{\\\"b\\\":2}','{\\\"c\\\":3}']) console.log(l)"], { onLine: (l) => lines.push(l) });
+	const frameResult = await frame.promise;
+	assert.equal(frameResult.status, 0);
+	assert.deepEqual(lines, ['{"a":1}', '{"b":2}', '{"c":3}'], "chunked stdout 必须按行分帧");
+
+	// ② 超时:永驻进程被杀,timedOut=true
+	const timeout = spawnStream(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { onLine: () => {}, timeoutMs: 300 });
+	const timeoutResult = await timeout.promise;
+	assert.equal(timeoutResult.timedOut, true);
+	assert.equal(timeout.killed, true);
+
+	// ③ 终止:abort → killTree,promise 结案且 timedOut 不置位
+	const controller = new AbortController();
+	const aborted = spawnStream(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { onLine: () => {}, signal: controller.signal });
+	setTimeout(() => controller.abort(new Error("test")), 150);
+	const abortResult = await aborted.promise;
+	assert.equal(aborted.killed, true);
+	assert.notEqual(abortResult.timedOut, true, "中止路径不得置 timedOut(仅超时置位)");
 });
