@@ -142,6 +142,7 @@ dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地
 | `E_OCR_TIMEOUT` | 前台 OCR/探针超时(后台作业不限时) | 已完成页已落盘,可 `--resume` 接续 |
 | `E_OCR_EMPTY` | 扫描件未识别出内容 | 检查扫描质量 |
 | `E_VISION_PLAN` | vision 任务书链路失败 | 检查 vision 配置;或回退 `engine=local` |
+| `E_ASSEMBLE` | 装配失败(plan 损坏/结构无效/非合法 UTF-8) | 重新生成任务书;检查各批 output 编码 |
 | `E_OUTPUT` | 输出写入失败 | 检查 outDir 权限/磁盘 |
 | `E_UNKNOWN` | 其他错误 | 查看 error 消息 |
 
@@ -182,6 +183,29 @@ md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision �
 | `background` | `auto`(默认)/`true`/`false` | OCR 类长任务后台作业化;**缺后台控制器时自动降级前台并附 warning,不失败**;文本层直提等快链路始终同步 |
 | `engine` | `auto`(默认)/`local`/`vision` | 扫描件引擎;auto=复杂度探针换轨(表格/公式占比>阈值→vision) |
 | `resume` | boolean | 断点续跑:接续 `.state.json` 已完成页,仅重试失败页 |
+
+### 装配与复查:`md_convert_assemble`
+
+vision 链路(复杂版面)的收口工具:各批转写完成后,读 T3 的 plan.json 做确定性完整性校验并装配最终 md。
+
+```
+md_convert_assemble({ planPath: "md/采购文件.vision/plan.json" })
+→ { ok: true, output: "md/采购文件.md", coverage: { found: 97, total: 97 }, findings: [] }
+
+md_convert_assemble({ planPath: "…", review: true })   // 对可疑页生成复查任务书
+```
+
+**确定性校验项**(非 AI 判断,可复现):各批 output 存在且非空;PAGE 锚点覆盖 1..总页数
+(无缺页/无重复/无越批);UTF-8 合法(严格解码,失败即致命);GBK 双重编码乱码特征
+(U+FFFD/锟斤拷系/Latin-1 连续串);极短页统计(剥离注释后可见字符 <10)。
+
+- 全部通过 → 按 PAGE 序合并写最终 md,返回 `findings: []`
+- 有问题 → 仍装配(缺页写占位锚块)并返回 `findings`(每项 `{page, severity, problem, evidence}`)
+- `review:true` → 生成 `<名>-vision/plan 同目录/<名>-review.md` 复查任务书(指向原 PNG +
+  逐字校正提示词 + 整批重写输出契约),并把受影响批次 `outputFile` 更新为
+  `outputs/review-batch-NN.md`;复查完成后**重新调用本工具**即再次校验装配
+
+CLI 等价:`dsh-md-convert assemble <plan.json> [--review]`(全绿退出 0,有 findings 退出 1)。
 
 插件配置(`cordis.patch.yml`,Schemastery 校验,零硬编码):
 
