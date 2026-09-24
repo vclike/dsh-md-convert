@@ -1,0 +1,181 @@
+# dsh-md-convert
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-4D6BFE)](LICENSE)
+
+将 Office 文档与 PDF(含扫描件)转换为**保留结构级排版**的 Markdown,基于 [MarkItDown](https://github.com/microsoft/markitdown) 引擎。提供 **CLI 命令行**与 **dsh agent 工具**(`md_convert`)双入口。
+
+- **AI Agent 使用规范**:[README.agent.md](README.agent.md)(错误码处理/批量规范/调用约定)
+- English: [README.en.md](README.en.md)
+
+## 支持格式与转换链路
+
+| 输入 | 链路 | 说明 |
+| --- | --- | --- |
+| `.docx` / `.xlsx` / `.pptx` | MarkItDown 直转 | 标题/列表/表格/段落保留为 Markdown |
+| `.pdf`(含文字层) | MarkItDown 直转 | 文字层为空时**自动回退路由 OCR** |
+| `.pdf`(扫描件) | **路由 OCR**(PP-DocLayout-L 版面 + RapidOCR 文字 / SLANet 表格 / FormulaNet 公式) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型 |
+| `.doc` / `.xls` / `.ppt` | WPS/Office COM(Windows)或 LibreOffice(其余平台)另存为新格式 → MarkItDown | 后端自动探测,可配置 |
+| `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / 直接读取 | MarkItDown 支持的全部格式 |
+
+> **"结构级排版"** = 标题层级(H1–H6)、列表、表格(管道表格)、段落顺序均保留。
+> Markdown 本身无法表达字体/字号/颜色/缩进等视觉细节,任何转换器都不会保留它们——这是格式本质。
+
+## 环境依赖
+
+- **Node.js ≥ 18**
+- 老格式转换(`.doc/.xls/.ppt`):Windows 需本机装有 **WPS Office** 或 **Microsoft Office**(COM 自动探测);Linux/macOS 需 **LibreOffice**(`apt install libreoffice`,自动探测 `soffice`)
+- **扫描件 OCR 以 CPU 为主、轻量模型优先、性价比优先**:模块化路由流水线——`PP-DocLayout-L` 版面分析(轻量)按区域路由,**文字走 RapidOCR(PP-OCRv6 ONNX,最快)**,表格走 SLANet+RT-DETR,**公式走 FormulaNet-Plus-S(轻量)**;标题层级由版面模型识别。质量有基本保证,但为效率做了取舍(如复杂版面/超小字号可能识别不全)
+- Linux 无头服务器建议安装中文字体 `fonts-noto-cjk`
+- **模型本地化**:OCR 模型首次经 `dsh-md-convert deps` 联网下载到本地缓存(`~/.paddlex/official_models/`,约数百 MB);**之后运行完全离线**,不做任何网络检查,断网可正常 OCR
+
+**依赖自动安装(默认开启)**:首次转换扫描件时,插件自动检测 Python 与 OCR 依赖
+(`paddlepaddle` `paddleocr` `paddlex[ocr]` `pypdfium2` `rapidocr` `onnxruntime`),
+**有则直接使用,缺则自动 `pip install`**,无需手动操作。可用 `--no-auto-install-deps` 关闭,或手动预装:
+
+```sh
+pip install paddlepaddle paddleocr "paddlex[ocr]" pypdfium2 rapidocr onnxruntime
+```
+
+> 路由 OCR = PP-DocLayout-L 版面分析(阈值 0.3)+ 区域路由:文字→RapidOCR、
+> 表格→SLANet 结构+RT-DETR 单元格+OCR 填格、公式→FormulaNet-S、印章→注释。
+
+## 安装
+
+### 作为 DSH 插件
+
+```sh
+dsh plugin --profile web add github:yakoylp/dsh-md-convert
+```
+
+安装后重启 `dsh web`,agent 获得 `md_convert` 工具。CLI 命令 `dsh-md-convert` 随 profile 的 `node_modules/.bin` 暴露。
+
+### 独立命令行(不装进 DSH)
+
+```sh
+git clone https://github.com/yakoylp/dsh-md-convert.git
+cd dsh-md-convert
+npm install
+npm link          # 全局获得 dsh-md-convert 命令
+# 或直接调用
+node lib/cli.js <文件...> -o <输出目录>
+```
+
+## 命令行用法
+
+```sh
+# 基本:批量转换
+dsh-md-convert a.docx b.pdf -o ./md
+
+# 老格式(自动探测:Windows 用 WPS→Office,Linux/macOS 用 LibreOffice)
+dsh-md-convert old.doc old.xls old.ppt -o ./md
+
+# 强制指定老格式后端
+dsh-md-convert old.doc -o ./md --legacy-backend wps
+
+# 扫描件:自动走路由 OCR(无需任何 OCR 参数;缺依赖自动安装)
+dsh-md-convert scan.pdf -o ./md
+
+# 指定 Python 解释器(多 Python 环境时)
+dsh-md-convert scan.pdf -o ./md --ocr-python "C:\path\to\python.exe"
+
+# 检查 / 安装 OCR 依赖与模型
+dsh-md-convert check        # 只检查状态,不安装
+dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地(需联网一次,之后离线可用)
+```
+
+完整选项见 `dsh-md-convert --help`。
+
+## 错误码与退出码
+
+失败时**必定携带稳定错误码**,调用方(CLI / agent / 二次开发)可据此分类处理:
+
+| 错误码 | 含义 | 处理 |
+| --- | --- | --- |
+| `E_FILE_NOT_FOUND` | 源文件不存在 | 检查路径 |
+| `E_UNSUPPORTED_FORMAT` | 扩展名不受支持 | 更换格式 |
+| `E_MARKITDOWN` | MarkItDown 转换失败 | 多为文件损坏/加密,可重试 |
+| `E_LEGACY_CONVERT` | 老格式另存失败(COM/LibreOffice) | Windows 需 WPS/Office、其余平台需 LibreOffice;已内置自动重试 |
+| `E_OCR_DEPS` | 缺 OCR 依赖(自动安装失败/已禁用) | 执行 `dsh-md-convert deps` |
+| `E_OCR_RUN` | 路由 OCR 执行失败 | 重试或降低 `--ocr-scale` |
+| `E_OCR_EMPTY` | 扫描件未识别出内容 | 检查扫描质量 |
+| `E_OUTPUT` | 输出写入失败 | 检查 outDir 权限/磁盘 |
+| `E_UNKNOWN` | 其他错误 | 查看 error 消息 |
+
+**CLI 输出格式**(批量时每行可定位到具体文件):
+
+```
+✓ markitdown  → ./md/a.md
+✗ [E_OCR_EMPTY] 扫描件未识别出任何内容  C:\docs\扫描件.pdf
+✗ [E_FILE_NOT_FOUND] 文件不存在:...  C:\docs\缺失.docx
+```
+
+**退出码**:`0` 全部成功 / `1` 存在失败(失败行含 `[错误码]` 与源文件路径)/ `2` 参数错误。
+
+## Agent 工具
+
+安装插件后,agent 可用 `md_convert` 工具:
+
+```
+md_convert({ file: "报告.docx", outDir: "./md" })
+→ { ok: true, output: "./md/报告.md", chain: "markitdown", warnings: [] }
+```
+
+插件配置(`cordis.patch.yml`):
+
+```yaml
+- insert:
+    - id: dsh-md-convert
+      name: dsh-md-convert
+      config:
+        outDir: ""            # 输出目录;空则用会话工作区
+        forceOcr: false       # 强制 PDF 走 OCR
+        ocrScale: 2           # PDF 渲染倍率
+        autoInstallDeps: true # 缺 OCR 依赖时自动 pip 安装
+        ocr:
+          python: ""          # Python 解释器(运行 OCR 流水线;空则自动探测)
+        legacy:
+          backend: "auto"     # auto | wps | office | libreoffice(auto:Windows 用 COM,其余平台用 LibreOffice)
+```
+
+## 老格式转换后端
+
+`.doc/.xls/.ppt` 先另存为现代格式再交给 MarkItDown。后端自动按平台选择:
+
+| 平台 | auto 后端 | 实现 |
+| --- | --- | --- |
+| Windows | **WPS → MS Office** | COM(PowerShell 脚本);WPS/Office 正在运行时自动重试(不会杀用户进程) |
+| Linux / macOS | **LibreOffice** | `soffice --headless --convert-to`,需安装 LibreOffice(自动探测 `soffice`/`libreoffice`) |
+
+可用 `--legacy-backend wps | office | libreoffice` 显式指定(如 Windows 无 WPS/Office 但装了 LibreOffice,可强制 `--legacy-backend libreoffice`)。
+
+## 临时文件清理
+
+- 每次转换使用独立临时目录(`%TEMP%/dsh-md-convert-*`),结束即删除
+- 进程异常退出时,`exit`/信号钩子兜底清理,下次运行自动清扫历史残留
+- OCR 无中间文件(Python 侧内存完成);调试可用 `--keep-temp` 保留
+
+## 测试
+
+```sh
+npm test                       # 单元测试(后端分流、LibreOffice mock)
+node test/run-smoke.mjs        # 7 格式冒烟(Windows 需 WPS/Office;Linux 需 LibreOffice)
+node test/run-smoke.mjs --all --reference   # 全量 8 格式(含扫描件 OCR),并把参考输出写入 test/fixtures/final-out/
+```
+
+## 已知问题
+
+- **paddlepaddle ≥3.3 的 oneDNN 与 PIR 静态图不兼容**会导致推理崩溃,插件已自动禁用
+  (`FLAGS_use_mkldnn=0` + `enable_mkldnn=False`),无需手动处理。
+- 扫描件 OCR 质量取决于版面清晰度;复杂版面/超小字号页面可适当提高 `--ocr-scale`(如 3)换取精度,耗时相应增加。
+
+## 限制
+
+- 加密/损坏文件、部分复杂版面可能转换失败(会给出明确错误)
+- MarkItDown 不支持的格式(如 `.pages/.key` 等)会明确报"不支持"
+- **效率优先的取舍**:路由 OCR 选用轻量模型(版面 PP-DocLayout-L、文字 RapidOCR、公式 FormulaNet-S),速度优先,
+  质量有基本保证;复杂表格(多层合并/斜线表头)、复杂多栏版面、超小字号可能存在识别不完整
+- OCR 模型首次需联网预下载(约数百 MB 到 `~/.paddlex/`),之后完全离线、秒级加载
+
+## 许可证
+
+[MIT](LICENSE) © 2026 yakoylp
