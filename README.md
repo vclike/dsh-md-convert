@@ -205,6 +205,9 @@ md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision �
         vision:
           pagesThreshold: 0     # 可选强制换轨闸(页数);0=不限,纯复杂度换轨
           complexityRatio: 0.4  # 表格+公式区域占比换轨阈值
+          batchSize: 8          # vision 每批页数(过大上下文过载,过小批次数膨胀)
+          renderScale: 2        # vision PNG 渲染倍率(≈144dpi)
+          promptTemplate: ""    # 自定义提示词模板路径(空=内置 lib/py/prompts/vision-ocr.md)
         legacy:
           backend: "auto"       # auto | wps | office | libreoffice
 ```
