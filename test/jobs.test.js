@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleMd, createOcrRun, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
+import { assembleMd, createOcrRun, estimateEtaSec, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
 
 function tmpDir(tag) {
@@ -99,6 +99,23 @@ test("assembleMd: 页号升序拼装 + 标题", () => {
 	const order = [...md.matchAll(/<!--PAGE:(\d+)-->/g)].map((m) => m[1]);
 	assert.deepEqual(order, ["01", "02", "03"]);
 	assert.equal(assembleMd(new Map(), ""), "");
+});
+
+/* ---------------- ETA 标定(bench.md) ---------------- */
+
+test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间", () => {
+	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)
+	assert.equal(estimateEtaSec(97, 1, 15), 1455);
+	// workers=4: 线性 364 + 开销 40 = 404 ∈ captain 标定区间 400-420s
+	const w4 = estimateEtaSec(97, 4, 15);
+	assert.equal(w4, 404);
+	assert.ok(w4 >= 400 && w4 <= 420, `workers=4 ETA ${w4}s 应落在 400-420s`);
+	// 非法输入返回 null(调用方不承诺 etaSec)
+	assert.equal(estimateEtaSec(0, 4), null);
+	assert.equal(estimateEtaSec(-1, 4), null);
+	assert.equal(estimateEtaSec(null, 4), null);
+	// workers=0 视作 1
+	assert.equal(estimateEtaSec(10, 0, 15), 150);
 });
 
 /* ---------------- createOcrRun ---------------- */
