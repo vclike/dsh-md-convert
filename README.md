@@ -12,8 +12,8 @@
 | 输入 | 链路 | 说明 |
 | --- | --- | --- |
 | `.docx` / `.xlsx` / `.pptx` | MarkItDown 直转 | 标题/列表/表格/段落保留为 Markdown |
-| `.pdf`(含文字层) | MarkItDown 直转 | 文字层为空时**自动回退路由 OCR** |
-| `.pdf`(扫描件) | **路由 OCR**(PP-DocLayout-L 版面 + RapidOCR 文字 / SLANet 表格 / FormulaNet 公式) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型 |
+| `.pdf`(含文字层) | MarkItDown 直转 | 文字层为空时**自动进入扫描件三层路由** |
+| `.pdf`(扫描件) | **三层引擎路由**(v0.6.0):① 复杂度探针抽样 3 页 → ② 表格/公式占比超阈值走 vision 任务书,否则 ③ **页级并行本地 OCR**(NDJSON 流式 + 断点续跑,任意页数) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型;长文档不再受单次同步调用时长限制 |
 | `.doc` / `.xls` / `.ppt` | WPS/Office COM(Windows)或 LibreOffice(其余平台)另存为新格式 → MarkItDown | 后端自动探测,可配置 |
 | `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / 直接读取 | MarkItDown 支持的全部格式 |
 
@@ -49,6 +49,36 @@ dsh plugin --profile web add github:yakoylp/dsh-md-convert
 
 安装后重启 `dsh web`,agent 获得 `md_convert` 工具。CLI 命令 `dsh-md-convert` 随 profile 的 `node_modules/.bin` 暴露。
 
+### 后台作业部署(v0.6.0,OCR 长任务不中断的前提)
+
+`md_convert` 的 `background=auto|true` 会把 OCR 类长任务(大页数扫描件)挂到 **ctx.jobs 后台作业**:
+立即返回 `{ok, background:true, jobId, etaSec}`,用 `job_output(jobId)` 轮询,`job_kill` 可取消
+(进程树终止,已完成页保留在 `.state.json`,可 `resume:true` 接续)。
+
+**前置条件(必须)**:组合中加载官方后台作业控制器两个包:
+
+```sh
+dsh plugin --profile web add github:deepseek-ai/dsh-jobs
+dsh plugin --profile web add github:deepseek-ai/dsh-tool-jobs
+```
+
+或在 profile 的 `cordis.patch.yml` 组合中插入:
+
+```yaml
+- insert:
+    - id: dsh-jobs
+      name: "@deepseek-ai/dsh-jobs"
+    - id: tool-jobs
+      name: "@deepseek-ai/dsh-tool-jobs"
+    - id: dsh-md-convert
+      name: dsh-md-convert
+```
+
+**前台降级行为**:未安装上述控制器时,`background=auto|true` **不会失败**——自动回退前台执行,
+返回结果附 `background:false` 与 warning「后台作业控制器未安装,已回退前台」。前台路径同样具备
+NDJSON 流式增量落盘(`.md` 逐页更新 + `.state.json` 断点)与 `exec.signal` 取消能力,
+但受单次工具调用时长约束——**长文档场景强烈建议安装控制器**。
+
 ### 独立命令行(不装进 DSH)
 
 ```sh
@@ -72,8 +102,20 @@ dsh-md-convert old.doc old.xls old.ppt -o ./md
 # 强制指定老格式后端
 dsh-md-convert old.doc -o ./md --legacy-backend wps
 
-# 扫描件:自动走路由 OCR(无需任何 OCR 参数;缺依赖自动安装)
+# 扫描件:自动走三层路由(复杂度探针 → vision 任务书 / 页级并行 OCR;缺依赖自动安装)
 dsh-md-convert scan.pdf -o ./md
+
+# v0.6.0:后台模式(立即打印 jobId,stderr 逐页进度,.md/.progress.json 随跑随写可轮询)
+dsh-md-convert convert scan.pdf -o ./md --background true --workers 2
+
+# v0.6.0:断点续跑(接续 .state.json 已完成页,仅重试失败页)
+dsh-md-convert convert scan.pdf -o ./md --resume
+
+# v0.6.0:强制引擎(跳过探针)
+dsh-md-convert convert scan.pdf -o ./md --engine local     # 或 --engine vision
+
+# --workers 1:进程内快速路径,不启进程池(兼容禁用命名管道的沙箱/容器;语义=Pool(1))
+dsh-md-convert convert scan.pdf -o ./md --workers 1
 
 # 指定 Python 解释器(多 Python 环境时)
 dsh-md-convert scan.pdf -o ./md --ocr-python "C:\path\to\python.exe"
@@ -96,8 +138,10 @@ dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地
 | `E_MARKITDOWN` | MarkItDown 转换失败 | 多为文件损坏/加密,可重试 |
 | `E_LEGACY_CONVERT` | 老格式另存失败(COM/LibreOffice) | Windows 需 WPS/Office、其余平台需 LibreOffice;已内置自动重试 |
 | `E_OCR_DEPS` | 缺 OCR 依赖(自动安装失败/已禁用) | 执行 `dsh-md-convert deps` |
-| `E_OCR_RUN` | 路由 OCR 执行失败 | 重试或降低 `--ocr-scale` |
+| `E_OCR_RUN` | OCR 执行失败(进程级/致命错误) | 已完成页保留于 `.state.json`,可 `--resume` 接续 |
+| `E_OCR_TIMEOUT` | 前台 OCR/探针超时(后台作业不限时) | 已完成页已落盘,可 `--resume` 接续 |
 | `E_OCR_EMPTY` | 扫描件未识别出内容 | 检查扫描质量 |
+| `E_VISION_PLAN` | vision 任务书链路失败 | 检查 vision 配置;或回退 `engine=local` |
 | `E_OUTPUT` | 输出写入失败 | 检查 outDir 权限/磁盘 |
 | `E_UNKNOWN` | 其他错误 | 查看 error 消息 |
 
@@ -117,24 +161,52 @@ dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地
 
 ```
 md_convert({ file: "报告.docx", outDir: "./md" })
-→ { ok: true, output: "./md/报告.md", chain: "markitdown", warnings: [] }
+→ { ok: true, background: false, output: "./md/报告.md", chain: "markitdown", warnings: [] }
+
+md_convert({ file: "97页扫描件.pdf", background: "auto" })
+→ { ok: true, background: true, jobId: "…", etaSec: 2160,
+    statePath: "…/97页扫描件.state.json", progressPath: "…/97页扫描件.progress.json" }
+// 轮询: job_output(jobId);取消: job_kill(jobId)(已完成页保留,可 resume 续跑)
+
+md_convert({ file: "扫描件.pdf", resume: true })           // 断点续跑
+md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision 任务书
 ```
 
-插件配置(`cordis.patch.yml`):
+**参数**(`background`/`engine` 缺省读插件配置):
+
+| 参数 | 取值 | 说明 |
+| --- | --- | --- |
+| `file` | 路径(必填) | 源文件 |
+| `outDir` | 目录 | 输出目录(默认插件配置或工作区) |
+| `forceOcr` | boolean | 强制 PDF 走 OCR 路由 |
+| `background` | `auto`(默认)/`true`/`false` | OCR 类长任务后台作业化;**缺后台控制器时自动降级前台并附 warning,不失败**;文本层直提等快链路始终同步 |
+| `engine` | `auto`(默认)/`local`/`vision` | 扫描件引擎;auto=复杂度探针换轨(表格/公式占比>阈值→vision) |
+| `resume` | boolean | 断点续跑:接续 `.state.json` 已完成页,仅重试失败页 |
+
+插件配置(`cordis.patch.yml`,Schemastery 校验,零硬编码):
 
 ```yaml
 - insert:
     - id: dsh-md-convert
       name: dsh-md-convert
       config:
-        outDir: ""            # 输出目录;空则用会话工作区
-        forceOcr: false       # 强制 PDF 走 OCR
-        ocrScale: 2           # PDF 渲染倍率
-        autoInstallDeps: true # 缺 OCR 依赖时自动 pip 安装
+        outDir: ""              # 输出目录;空则用会话工作区
+        forceOcr: false         # 强制 PDF 走 OCR
+        ocrScale: 2             # PDF 渲染倍率
+        autoInstallDeps: true   # 缺 OCR 依赖时自动 pip 安装
+        background: "auto"      # OCR 类任务后台作业化: auto | true | false
+        engine: "auto"          # 扫描件引擎路由: auto | local | vision
         ocr:
-          python: ""          # Python 解释器(运行 OCR 流水线;空则自动探测)
+          python: ""            # Python 解释器(空则自动探测)
+          workers: 0            # 并行 worker;0=默认 min(CPU,8);1=进程内快速路径(沙箱/容器)
+          probeTimeoutMs: 120000
+          runTimeoutMs: 7200000 # 前台 OCR 超时(后台作业不限)
+          etaPerPageSec: 15     # ETA 估算单页均耗
+        vision:
+          pagesThreshold: 0     # 可选强制换轨闸(页数);0=不限,纯复杂度换轨
+          complexityRatio: 0.4  # 表格+公式区域占比换轨阈值
         legacy:
-          backend: "auto"     # auto | wps | office | libreoffice(auto:Windows 用 COM,其余平台用 LibreOffice)
+          backend: "auto"       # auto | wps | office | libreoffice
 ```
 
 ## 老格式转换后端
@@ -152,15 +224,22 @@ md_convert({ file: "报告.docx", outDir: "./md" })
 
 - 每次转换使用独立临时目录(`%TEMP%/dsh-md-convert-*`),结束即删除
 - 进程异常退出时,`exit`/信号钩子兜底清理,下次运行自动清扫历史残留
-- OCR 无中间文件(Python 侧内存完成);调试可用 `--keep-temp` 保留
+- v0.6.0 并行 OCR:页 PNG 由 Python 侧临时目录自管理(运行结束自动清理);输出目录旁的
+  `<名>.md`(逐页增量)、`<名>.state.json`(断点状态)、`<名>.progress.json`(进度镜像)为持久产物,支持续跑与观测
+- 调试可用 `--keep-temp` 保留中间文件
 
 ## 测试
 
 ```sh
-npm test                       # 单元测试(后端分流、LibreOffice mock)
-node test/run-smoke.mjs        # 7 格式冒烟(Windows 需 WPS/Office;Linux 需 LibreOffice)
-node test/run-smoke.mjs --all --reference   # 全量 8 格式(含扫描件 OCR),并把参考输出写入 test/fixtures/final-out/
+npm test                       # 单元测试:node --test(路由决策阈值/NDJSON 解析与锚点 upsert/
+                               # state.json 断点续跑/后台作业返回结构/优雅降级)
+node lib/cli.js convert test/fixtures/sample3.pdf -o .tmp/smoke --force-ocr --background true --workers 1
+                               # 3 页纯图 fixture 冒烟:立即打印 jobId → 进度 → md 锚点完整
+                               # (workers 1=进程内快速路径,兼容禁命名管道的沙箱/容器)
 ```
+
+> 多 worker(`--workers 2`)走 multiprocessing.Pool,需环境允许命名管道;
+> 受限环境(容器/沙箱)请用 `--workers 1`,语义与 Pool(1) 一致。
 
 ## 已知问题
 

@@ -51,6 +51,7 @@
     }
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
     "markitdown-node": "^1.5.2"
   },
   "peerDependencies": {
