@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .tmp/
 .dev-notes-node.md
+# 调试/临时产物不入�?.probe/
+.*.mjs
+*.tgz
+wly-pymupdf.md
+

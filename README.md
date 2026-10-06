@@ -2,20 +2,23 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-4D6BFE)](LICENSE)
 
-将 Office 文档与 PDF(含扫描件)转换为**保留结构级排版**的 Markdown,基于 [MarkItDown](https://github.com/microsoft/markitdown) 引擎。提供 **CLI 命令行**与 **dsh agent 工具**(`md_convert`)双入口。
+将 Office 文档与 PDF(含扫描件)转换为**保留结构级排版**的 Markdown。**五引擎置信度驱动调度**:文字层 PDF 走 [PyMuPDF4LLM](https://github.com/pymupdf/pymupdf4llm) 段落合并直提(主)与自研 pypdfium2 结构增强链(兜底),扫描件走本地 OCR/视觉任务书探针分流,Office 走 [MarkItDown](https://github.com/microsoft/markitdown)。提供 **CLI 命令行**与 **dsh agent 工具**(`md_convert`)双入口。
 
 - **AI Agent 使用规范**:[README.agent.md](README.agent.md)(错误码处理/批量规范/调用约定)
 - English: [README.en.md](README.en.md)
 
-## 支持格式与转换链路
+## 支持格式与转换链路(v0.7.0)
 
 | 输入 | 链路 | 说明 |
 | --- | --- | --- |
-| `.docx` / `.xlsx` / `.pptx` | MarkItDown 直转 | 标题/列表/表格/段落保留为 Markdown |
-| `.pdf`(含文字层) | MarkItDown 直转 | 文字层为空时**自动进入扫描件三层路由** |
-| `.pdf`(扫描件) | **三层引擎路由**(v0.6.0):① 复杂度探针抽样 3 页 → ② 表格/公式占比超阈值走 vision 任务书,否则 ③ **页级并行本地 OCR**(NDJSON 流式 + 断点续跑,任意页数) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型;长文档不再受单次同步调用时长限制 |
+| `.docx` / `.xlsx` / `.pptx` | **MarkItDown 子进程桥**(主引擎) | XML 结构无损映射:标题/列表/表格/段落原生保留 |
+| `.pdf`(含文字层) | **PyMuPDF4LLM 段落合并直提**(主引擎,v0.6.14+)→ 质量信号触发时自研 **pypdfium2 结构增强链**二次对比(表格重建/标题层级/链接保留/页眉页脚剥离/PAGE 锚点/逐页图像占比);**逐字符定位文字层**(Word 导出常见)自动切换字符坐标重建 | 产物附 `quality` 质量信号(score/issues/suggestVision),碎片化自动换引擎并透出 `[质量修复]` 警告 |
+| `.pdf`(扫描件/纯图) | **三层引擎路由**(v0.6.0):① 复杂度探针抽样 3 页 → ② 表格/公式占比超阈值走 vision 任务书,否则 ③ **页级并行本地 OCR**(NDJSON 流式 + 断点续跑,任意页数) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型 |
 | `.doc` / `.xls` / `.ppt` | WPS/Office COM(Windows)或 LibreOffice(其余平台)另存为新格式 → MarkItDown | 后端自动探测,可配置 |
 | `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / 直接读取 | MarkItDown 支持的全部格式 |
+
+> **引擎显式指定**:`engine:"pymupdf4llm"` 强制段落合并直提(跳过自研直提优先级);
+> `engine:"local"/"vision"` 强制扫描件路由;默认 `engine:"auto"` 全自动调度。
 
 > **"结构级排版"** = 标题层级(H1–H6)、列表、表格(管道表格)、段落顺序均保留。
 > Markdown 本身无法表达字体/字号/颜色/缩进等视觉细节,任何转换器都不会保留它们——这是格式本质。
@@ -23,6 +26,7 @@
 ## 环境依赖
 
 - **Node.js ≥ 18**
+- **PDF 文字层引擎**(推荐):`pip install pymupdf4llm`(可选依赖,未安装时自动降级自研 pypdfium2 链 + 质量信号建议)
 - 老格式转换(`.doc/.xls/.ppt`):Windows 需本机装有 **WPS Office** 或 **Microsoft Office**(COM 自动探测);Linux/macOS 需 **LibreOffice**(`apt install libreoffice`,自动探测 `soffice`)
 - **扫描件 OCR 以 CPU 为主、轻量模型优先、性价比优先**:模块化路由流水线——`PP-DocLayout-L` 版面分析(轻量)按区域路由,**文字走 RapidOCR(PP-OCRv6 ONNX,最快)**,表格走 SLANet+RT-DETR,**公式走 FormulaNet-Plus-S(轻量)**;标题层级由版面模型识别。质量有基本保证,但为效率做了取舍(如复杂版面/超小字号可能识别不全)
 - Linux 无头服务器建议安装中文字体 `fonts-noto-cjk`
@@ -74,10 +78,58 @@ dsh plugin --profile web add github:deepseek-ai/dsh-tool-jobs
       name: dsh-md-convert
 ```
 
-**前台降级行为**:未安装上述控制器时,`background=auto|true` **不会失败**——自动回退前台执行,
-返回结果附 `background:false` 与 warning「后台作业控制器未安装,已回退前台」。前台路径同样具备
-NDJSON 流式增量落盘(`.md` 逐页更新 + `.state.json` 断点)与 `exec.signal` 取消能力,
-但受单次工具调用时长约束——**长文档场景强烈建议安装控制器**。
+**前台降级行为(v0.6.1 降级链)**:未安装上述控制器,或后台作业启动被宿主拒绝
+(如 owner 校验失败)时,`background=auto|true` **不会失败**——先尝试无主(unowned)
+后台作业,仍不行则回退前台执行,返回结果附 `background:false` 与降级 warning
+(缺控制器 / 启动失败原因;无主作业完成后不会自动注入会话,需 `job_output(jobId)` 轮询)。
+前台路径同样具备 NDJSON 流式增量落盘(`.md` 逐页更新 + `.state.json` 断点)与
+`exec.signal` 取消能力,但受单次工具调用时长约束——**长文档场景强烈建议安装控制器**。
+
+**前台页数闸门(v0.6.1)**:`background=false` 且本地 OCR 页数 > `ocr.foregroundMaxPages`
+(默认 30,0=不限制)时拒绝执行(稳定错误码 `E_FOREGROUND_LIMIT`),附后台 / vision /
+resume 替代路线与 ETA 提示——前台长任务会占满 CPU/内存拖垮整机(97 页实测:前台
+8 workers 10 分钟仅 18 页且系统卡死)。
+
+### 引擎路由决策表(v0.6.2)
+
+| 输入特征 | 引擎 | 耗时(97 页参考) | 说明 |
+| --- | --- | --- | --- |
+| docx/xlsx/pptx(Office 结构化) | **markitdown 子进程桥** | 毫秒~秒 | 表格原生 md 化(结构标记→标准表格) |
+| PDF 有文字层 | **pypdfium2 结构增强直提** | 秒级 | 表格重建/标题层级/链接保留/页眉页脚剥离(见下);markitdown 子进程桥兜底,失败原因随 `warnings` 透出 |
+| 无文字层 + 版面简单(表格/公式 ≤40%) | **本地并行 OCR** | ≈6-10 分钟(4 workers,后台) | 零 token;后台优先,前台 30 页闸门 |
+| 无文字层 + 版面复杂(表格/公式 >40%) | **vision 模型阅读** | ≈25 分钟(8 路子代理) | 语义质量优先,复杂表格/印章/公式更准 |
+
+决策原则:**有文字层绝不 OCR**;无文字层按复杂度分流(简单→本地 OCR,复杂→模型阅读);
+长任务后台优先、前台有闸门;每一次降级(引擎切换/后台失败/闸门拦截)都通过
+`warnings` 与 `decision` 字段透出原因,不再静默。
+
+### 文字层结构增强与页级局部 vision(v0.6.4)
+
+pypdfium2 兜底链路(v0.6.3+)在纯文字提取之上叠加确定性结构增强,均可独立开关:
+
+- **链接保留**:raw `FPDFLink` API 提取 URI 链接;URL 尾段文件名能在正文回查时内联为
+  `[文件名](url)`,其余入页尾「本页链接:」脚注——URL 零丢失(`--no-links` 关闭)。
+- **页眉页脚剥离**:边距带 + 跨页重复(≥60% 页数) + 版权/页码正则(`--no-headers` 关闭)。
+- **孤儿符号回挂**:与正文断行的列表符回挂为 `- 正文`;连续符号行(页边距布局幽灵)丢弃。
+- **标题层级重建**(v0.6.4):行框高度聚类正文字号,节标题 → `##`、小节标题 → `###`,
+  跨中西文字号差的拆行标题自动合并(`--no-headings` 关闭)。
+- **逐页图像占比 → visionHints**(v0.6.4):raw 页面对象枚举(零渲染)统计每页图像面积占比,
+  ≥15% 的页随结果返回 `visionHints:{threshold,pages,detail}`,提示其内嵌截图文字不在文字层。
+
+对 visionHints 命中的页,可做**页级局部视觉重转**(只渲染/转写命中的页,其余页仍用文字层):
+
+```sh
+# ① 常规转换 → 结果携带 visionHints:{pages:[5]}
+md_convert({ file: "doc.pdf" })
+# ② 对命中页出子集任务书 → 产物仅含第 5 页
+md_convert({ file: "doc.pdf", engine: "vision", onlyPages: "5" })
+# ③ md_convert_assemble 装配子集 → 把产物中的 <!--PAGE:05--> 块
+#    替换进①产物 md 的同名锚点块,即完成局部增强合并
+md_convert_assemble({ planPath: "<doc.vision>/plan.json" })
+```
+
+子集计划的 `plan.source.pageList` 声明覆盖页;装配覆盖率只考察子集,
+产物文件名为 `<名>-p5-p7.md`(不覆盖全页版)。
 
 ### 独立命令行(不装进 DSH)
 
@@ -222,7 +274,8 @@ CLI 等价:`dsh-md-convert assemble <plan.json> [--review]`(全绿退出 0,有 f
         engine: "auto"          # 扫描件引擎路由: auto | local | vision
         ocr:
           python: ""            # Python 解释器(空则自动探测)
-          workers: 0            # 并行 worker;0=默认 min(CPU,8);1=进程内快速路径(沙箱/容器)
+          workers: 0            # 并行 worker;0=资源感知 min(CPU,4,内存预算);1=进程内快速路径(沙箱/容器)
+          foregroundMaxPages: 30 # 前台 OCR 页数闸门;0=不限制(超限拒绝并指引后台/vision/resume)
           probeTimeoutMs: 120000
           runTimeoutMs: 7200000 # 前台 OCR 超时(后台作业不限)
           etaPerPageSec: 15     # ETA 估算单页均耗

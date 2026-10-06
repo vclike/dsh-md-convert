@@ -98,6 +98,45 @@ def _log(msg):
     sys.stderr.flush()
 
 
+# ---------------------------------------------------------------- 资源感知默认 worker(v0.6.1)
+
+_WORKER_MEM_BUDGET = 2.5 * 1024 ** 3  # 每 worker 内存预算: PP-DocLayout+SLANet+RapidOCR 实测 ~2.45GB 起(docs/bench.md)
+_WORKERS_HARD_CAP = 4                 # bench 只标定到 4;8 路并发曾致内存饱和+整机卡顿(2026-10-05 事故)
+
+
+def _total_mem_bytes():
+    """物理内存总量;取不到返回 0(调用方回退仅按 CPU/上限钳制)。"""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullTotalPhys)
+            return 0
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except Exception:
+        return 0
+
+
+def _default_workers():
+    """资源感知默认: min(CPU, 4, 内存预算)。与 Node 侧 jobs.js defaultWorkers 同口径。"""
+    cpu = os.cpu_count() or 4
+    mem = _total_mem_bytes()
+    by_mem = max(1, int(mem // _WORKER_MEM_BUDGET)) if mem > 0 else _WORKERS_HARD_CAP
+    return max(1, min(cpu, _WORKERS_HARD_CAP, by_mem))
+
+
 # ---------------------------------------------------------------- 协议内容
 
 def page_anchor_md(no, body):
@@ -185,6 +224,7 @@ def _ocr_page(task):
             "no": no,
             "md": page_anchor_md(no, "\n\n".join(parts)),
             "stats": stats,
+            "duration": round(time.time() - t0, 2),  # v0.6.8 可观测性:单页 OCR 耗时(秒)
         }
         _log("page %d 完成: tables=%d formulas=%d textChars=%d (%.2fs)"
              % (no, stats["tables"], stats["formulas"], stats["textChars"],
@@ -192,7 +232,7 @@ def _ocr_page(task):
         return res
     except Exception as e:
         _log("page %d 失败: %s" % (no, str(e)[:200]))
-        return {"no": no, "error": str(e)[:300]}
+        return {"no": no, "error": str(e)[:300], "duration": round(time.time() - t0, 2)}
 
 
 # ---------------------------------------------------------------- state
@@ -305,7 +345,7 @@ def _run_ocr(pdf_path, args):
         return 1
 
     total_eff = min(total, args.limit_pages) if args.limit_pages and args.limit_pages > 0 else total
-    workers = args.workers or min(os.cpu_count() or 4, 8)
+    workers = args.workers or _default_workers()
     workers = max(1, int(workers))
     _emit({"event": "start", "total": total_eff})
 
@@ -382,11 +422,13 @@ def _run_ocr(pdf_path, args):
                 failed_no(no, msg)
                 _emit({"event": "page", "no": no,
                        "md": _failed_page_md(no, res["error"]),
-                       "stats": {"tables": 0, "formulas": 0, "textChars": 0}})
+                       "stats": {"tables": 0, "formulas": 0, "textChars": 0},
+                       "duration": res.get("duration")})
             else:
                 done_no(no)
                 _emit({"event": "page", "no": no,
-                       "md": res["md"], "stats": res["stats"]})
+                       "md": res["md"], "stats": res["stats"],
+                       "duration": res.get("duration")})
             persist()
             completed += 1
 
@@ -433,7 +475,7 @@ def main():
     ap.add_argument("--scale", type=float, default=2.0,
                     help="渲染倍率(1=72dpi,默认 2≈144dpi)")
     ap.add_argument("--workers", type=int, default=0,
-                    help="并行 worker 数(默认 min(CPU 核数, 8);0=取默认;"
+                    help="并行 worker 数(默认资源感知 min(CPU,4,内存预算);0=取默认;"
                          "1=进程内顺序执行,不启进程池,兼容受限环境与调试)")
     ap.add_argument("--resume", metavar="STATE_JSON", default=None,
                     help="断点续跑状态文件路径(每页完成即原子落盘)")

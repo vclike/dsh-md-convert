@@ -1,0 +1,517 @@
+# -*- coding: utf-8 -*-
+"""
+dsh-md-convert — PDF 文字层直提兜底(pypdfium2,v0.6.4 结构增强)
+
+用途: markitdown-node 在宿主运行时(Electron 内置 Node)内对部分文字层 PDF
+失败/返回空时的秒级兜底——纯文字提取 + 五个确定性结构增强(零 OCR 零新增依赖):
+
+  1. 链接提取(P0-2): raw FPDFLink_Enumerate/FPDFAction_GetURIPath 提取 URI 链接,
+     URL 尾段文件名回查正文内联为 [文件名](url);其余降级为页尾脚注,不丢 URL。
+  2. 页眉页脚剥离(P0-3): 边距带(y 比例) + 跨页重复(≥60% 且 ≥2 页) + 页脚正则。
+  3. 孤儿符号回挂(P0-4): 与正文断行的列表符(•)回挂到下一条内容行;
+     连续符号行(页边距栏布局幽灵)识别并丢弃。
+  4. 标题层级重建(v0.6.4): 行框高度聚类出正文字号,≥1.30× 为标题候选,
+     相邻标题行(跨中西文字号差被拆行)合并,≥1.55× → ## 其余 → ###。
+  5. 逐页图像占比(v0.6.4): raw 页面对象枚举统计 FPDF_PAGEOBJ_IMAGE 面积占比,
+     供上游 visionHints(页级局部 vision 路由)决策——零渲染成本。
+
+行为开关(默认全开,供 A/B 与安全回退):
+  --no-links / --no-headers / --no-headings / --margin <ratio>
+保底路径: 行框/链接任一 API 异常时逐级降级到旧版 get_text_bounded 全文直提,绝不失败。
+
+stdout 协议(单个 JSON,UTF-8):
+  {"total": 9, "pages": [{"no": 1, "text": "...", "img_ratio": 0.12}, ...], "notes": {...}}
+  打不开 PDF: {"ok": false, "error": "..."} 并退出码 1
+"""
+import argparse
+import ctypes
+import json
+import re
+import sys
+from collections import Counter
+
+import pypdfium2 as pdfium
+
+try:
+    import table_rebuild  # 同目录线框表格重建模块(v0.6.6)
+except Exception:
+    table_rebuild = None
+
+try:
+    import pypdfium2.raw as pdfium_c
+except Exception:  # pragma: no cover - raw 模块缺失时链接/图像占比/表格降级
+    pdfium_c = None
+
+# 页眉/页脚边距带(占页高比例;pdfium 原点左下,y 向上)
+MARGIN_RATIO = 0.12
+# 同带内重复行判定的页数阈值:max(2, ceil(0.6 * 有效页数))
+REPEAT_RATIO = 0.6
+# 页眉/页脚区正则(仅边距带内生效,避免误杀正文)
+ZONE_LINE_PAT = re.compile(
+    r"^(?:版权所有©?.*|\d+(?:\s*/\s*\d+)?|第\s*\d+\s*页(?:.*共\s*\d+\s*页)?|Powered by .+)$"
+)
+# 孤儿列表符(仅符号、无正文)
+BULLET_ONLY_PAT = re.compile(r"^[•·◦‣▪○●□■◆◇*+\-–—]+$")
+# 孤儿序号(阿拉伯/括号序号,后随断行)
+NUM_ONLY_PAT = re.compile(r"^(\d{1,2}[.、]|\(\d{1,2}\)[.、]?|\[\d{1,2}\][.、]?)$")
+# 标题判定阈值(相对正文字号行高;真机校准:正文≈9.5,节标题≈1.45×,章标题≈2.48×)
+HEADING_MIN_RATIO = 1.25
+HEADING_H2_RATIO = 1.40
+HEADING_MAX_LEN = 50
+URI_ACTION_TYPE = 3  # pdfium action type: URI
+# pdfium 页面对象类型:IMAGE 用 raw 常量(实证 =3;勿硬编码,TEXT=1/PATH=2/FORM=4)
+PAGEOBJ_IMAGE = getattr(pdfium_c, "FPDF_PAGEOBJ_IMAGE", 3) if pdfium_c else 3
+
+
+def _utf8_stdio():
+    """Windows 管道默认 GBK,JSON 输出强制 UTF-8。"""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def _norm(text):
+    """归一化用于跨页重复比较(去全部空白差异)。"""
+    return re.sub(r"\s+", "", text or "")
+
+
+def _page_lines(tp):
+    """行框提取: [(y_bottom, y_top, text)] 按字符序(阅读序);异常返回 None。"""
+    try:
+        n = tp.count_rects()
+        lines = []
+        for i in range(n):
+            l, b, r, t = tp.get_rect(i)
+            txt = (tp.get_text_bounded(left=l, bottom=b, right=r, top=t) or "").strip()
+            if txt:
+                lines.append((float(b), float(t), txt))
+        return lines or None
+    except Exception:
+        return None
+
+
+def _char_rebuild_lines(tp):
+    """逐字符文字层兜底(v0.6.13): 字符坐标重建阅读行;异常/无字符返回 None。
+
+    背景(2026-10-06 五粮液采购文件实证): 部分 Word 导出 PDF 启用字符级定位,
+    每字符一个独立行框(全册 1.1 字符/框,视觉渲染正常但直提逐字断裂不可读)。
+    纯几何重建零 token,优于 vision 路由。竖排单列文字重建后恰为正确阅读序
+    (每字符独立 y,从上到下);多列竖排不支持(诚实边界)。
+    """
+    try:
+        n = tp.count_chars()
+        text = tp.get_text_range(0, n)
+    except Exception:
+        return None
+    chars = []
+    for i in range(min(n, 50000)):
+        ch = text[i] if i < len(text) else ""
+        if not ch or ch.isspace():
+            continue
+        try:
+            l, b, r, t = tp.get_charbox(i)
+        except Exception:
+            continue
+        chars.append(((l + r) / 2.0, (b + t) / 2.0, ch, l, r, b, t))
+    if not chars:
+        return None
+    # y 聚类成行(字形垂直重叠 = 同行;下划线等低基线字符不拆行)
+    chars.sort(key=lambda c: (-c[6], c[3]))
+    rows = []
+    cur = [chars[0]]
+    cur_hi, cur_lo = chars[0][6], chars[0][5]
+    for c in chars[1:]:
+        b, t = c[5], c[6]
+        if b <= cur_hi + 1.0 and t >= cur_lo - 1.0:
+            cur.append(c)
+            cur_hi, cur_lo = max(cur_hi, t), min(cur_lo, b)
+        else:
+            rows.append(cur)
+            cur = [c]
+            cur_hi, cur_lo = t, b
+    rows.append(cur)
+    # 行内拼接(x 升序;间隙 > max(2.5pt, 0.45×前字宽) 还原词界)
+    out = []
+    for row in rows:
+        row.sort(key=lambda c: c[3])
+        buf = ""
+        prev_r = None
+        prev_w = None
+        for _cx, _cy, ch, cl, cr, _cb, _ct in row:
+            if prev_r is not None and cl - prev_r > max(2.5, 0.45 * (prev_w or 0.0)):
+                buf += " "
+            buf += ch
+            prev_r = cr
+            prev_w = cr - cl
+        txt = buf.strip()
+        if txt:
+            out.append((min(c[5] for c in row), max(c[6] for c in row), txt))
+    return out or None
+
+
+def _page_avg_chars_per_box(lines):
+    """行框平均字符数(<1.5 = 字符级定位文字层的判据)。"""
+    if not lines:
+        return 99.0
+    return sum(len(t) for _b, _t, t in lines) / len(lines)
+
+
+def _page_img_ratio(page):
+    """图像对象面积占**页面面积**比(raw 页面对象枚举,零渲染);异常返回 None。
+
+    注: 多图层叠加的图像面积会重复计入(偏保守高估,对 visionHints 方向无害);
+    分母取页面面积而非对象面积总和——文本对象框面积会稀释占比(v0.6.4 真机修正)。
+    """
+    if pdfium_c is None:
+        return None
+    try:
+        img_area = 0.0
+        w, h = page.get_size()
+        page_area = float(w) * float(h)
+        if page_area <= 0:
+            return None
+        count = pdfium_c.FPDFPage_CountObjects(page.raw)
+        for i in range(min(count, 4096)):  # 单页对象数保险丝
+            obj = pdfium_c.FPDFPage_GetObject(page.raw, i)
+            if not obj:
+                continue
+            if pdfium_c.FPDFPageObj_GetType(obj) != PAGEOBJ_IMAGE:
+                continue
+            l, b, r, t = ctypes.c_float(), ctypes.c_float(), ctypes.c_float(), ctypes.c_float()
+            if not pdfium_c.FPDFPageObj_GetBounds(obj, ctypes.byref(l), ctypes.byref(b), ctypes.byref(r), ctypes.byref(t)):
+                continue
+            img_area += max(0.0, (r.value - l.value)) * max(0.0, (t.value - b.value))
+        return round(min(1.0, img_area / page_area), 3)
+    except Exception:
+        return None
+
+
+def _page_links(doc_raw, page_raw):
+    """URI 链接提取: [(anchor_text, url)];raw API 异常返回 None(调用方降级)。
+
+    v0.6.3 决策: FPDFLink_CountRects/GetRect 在 pypdfium2 raw 绑定下对部分链接
+    注解触发 access violation(真机实证),逐链接矩形锚文本路放弃;
+    anchor 恒为空串,由 _apply_links 用「URL 尾段文件名回查正文」启发式内联。
+    """
+    if pdfium_c is None:
+        return None
+    out = []
+    try:
+        link_holder_t = pdfium_c.FPDFLink_Enumerate.argtypes[2]._type_
+        link_holder = link_holder_t()
+        start = ctypes.c_int(0)
+        for _ in range(128):  # 单页链接数保险丝
+            if not pdfium_c.FPDFLink_Enumerate(page_raw, ctypes.byref(start), ctypes.byref(link_holder)):
+                break
+            action = pdfium_c.FPDFLink_GetAction(link_holder)
+            if not action:
+                continue
+            if pdfium_c.FPDFAction_GetType(action) != URI_ACTION_TYPE:
+                continue
+            need = pdfium_c.FPDFAction_GetURIPath(doc_raw, action, None, 0)
+            if need <= 0:
+                continue
+            buf = ctypes.create_string_buffer(need)
+            pdfium_c.FPDFAction_GetURIPath(doc_raw, action, buf, need)
+            url = buf.raw.decode("utf-8", errors="replace").rstrip("\x00")
+            if not url:
+                continue
+            # 协议白名单:仅保留真实外链;过滤 PDF 内部跳转锚点(如 "af://n29",
+            # 实测极至地点推荐.pdf 单页 9 条引用角标链接全为此类纯噪音)
+            if not url.lower().startswith(("http://", "https://", "mailto:")):
+                continue
+            out.append(("", url))
+        return out
+    except Exception:
+        return None
+
+
+def _detect_headers_footers(pages_meta, margin):
+    """跨页页眉/页脚判定: 边距带内 跨页重复(≥max(2,60%页数)) 或 命中页码/版权正则。
+
+    pages_meta: [{"no", "lines", "page_h"}];返回 set[归一化文本]。
+    """
+    strip = set()
+    usable = [m for m in pages_meta if m["lines"] and m["page_h"] > 0]
+    if not usable:
+        return strip
+    n_pages = len(usable)
+    threshold = max(2, -(-n_pages * REPEAT_RATIO // 1))  # ceil(0.6N) 且 ≥2
+    by_zone = {"top": Counter(), "bottom": Counter()}
+    for m in usable:
+        h = m["page_h"]
+        for b, t, txt in m["lines"]:
+            if t >= h * (1 - margin):
+                by_zone["top"][_norm(txt)] += 1
+            elif b <= h * margin:
+                by_zone["bottom"][_norm(txt)] += 1
+    for zone in by_zone:
+        for key, cnt in by_zone[zone].items():
+            if cnt >= threshold:
+                strip.add(key)
+    # 正则候选(边距带内出现≥1 次即剥:版权行/页码/第N页)
+    for m in usable:
+        h = m["page_h"]
+        for b, t, txt in m["lines"]:
+            if (t >= h * (1 - margin) or b <= h * margin) and ZONE_LINE_PAT.match(txt):
+                strip.add(_norm(txt))
+    return strip
+
+
+def _merge_orphans(lines):
+    """孤儿符号回挂: 与正文断行的列表符/序号回挂为 "- 正文" / "N. 正文"。
+
+    连续符号行(布局幽灵,如页边距栏步骤号)互不回挂,直接丢弃——
+    真实序号列表的序号与正文在同一文本对象内,不产生孤儿行。
+    行元组 (b, t, txt) 贯穿:合并行沿用内容行的坐标。
+    返回 (新行列表, 回挂数, 丢弃幽灵数)。
+    """
+    def is_marker(t):
+        return bool(BULLET_ONLY_PAT.match(t) or NUM_ONLY_PAT.match(t))
+
+    out = []
+    merged = dropped = 0
+    i = 0
+    while i < len(lines):
+        b, t, txt = lines[i]
+        if is_marker(txt):
+            if i + 1 < len(lines) and not is_marker(lines[i + 1][2]):
+                nb, nt, ntxt = lines[i + 1]
+                if BULLET_ONLY_PAT.match(txt):
+                    out.append((nb, nt, "- " + ntxt))
+                else:
+                    marker = NUM_ONLY_PAT.match(txt).group(1)
+                    marker = marker if marker.endswith((".", "、")) else marker + "."
+                    out.append((nb, nt, marker + " " + ntxt))
+                merged += 1
+                i += 2
+                continue
+            dropped += 1  # 连续符号行(布局幽灵)或页尾孤儿 → 丢弃
+            i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return out, merged, dropped
+
+
+def _apply_headings(lines, body_h):
+    """标题层级重建(v0.6.4): 行高聚类 → ## / ###;紧邻续行合并。
+
+    真机校准(火山方舟 PDF):正文 h≈9.5,节标题(能力介绍/常见问题)≈13.9-14.0
+    (≈1.45×),章标题 ≈23.6(≈2.48×);中文标题与其西文 run 常被拆为两行且
+    包围盒强重叠(gap≈-11~-14),故候选行后允许**紧邻续行**并入:
+    gap ≤ 0.5×body_h 且行高 ≥0.9×body_h 且短行非句读结尾。
+    ≥1.40×body_h → "## ",其余候选 → "### "(# 留给文档标题)。
+    返回 (新行列表, 标题数)。
+    """
+    if body_h <= 0 or not lines:
+        return lines, 0
+
+    def is_candidate(txt, h):
+        if h < body_h * HEADING_MIN_RATIO or len(txt) > HEADING_MAX_LEN:
+            return False
+        if len(txt) < 2 or re.search(r"[。；,;:]$", txt):
+            return False
+        return True
+
+    def is_continuation(txt, h, gap):
+        # 紧邻续行:与前一标题行包围盒重叠/极近(中文主标题+西文 run 拆行形态)
+        if gap > body_h * 0.5 or h < body_h * 0.9 or len(txt) > HEADING_MAX_LEN:
+            return False
+        return not re.search(r"[。；,;:]$", txt)
+
+    def level_of(h):
+        return 2 if h >= body_h * HEADING_H2_RATIO else 3
+
+    merged = []
+    i = 0
+    n = 0
+    while i < len(lines):
+        b, t, txt = lines[i]
+        if not is_candidate(txt, t - b):
+            merged.append(lines[i])
+            i += 1
+            continue
+        # 收集候选行 + 紧邻续行(gap = 前行 y_bottom - 后行 y_top,重叠为负)
+        group = [(b, t, txt)]
+        best = t - b  # 组内最大候选行高,定级用
+        j = i + 1
+        while j < len(lines):
+            pb, pt, ptxt = lines[j]
+            gap = group[-1][0] - pt
+            if is_candidate(ptxt, pt - pb):
+                if gap > body_h * 2.2:
+                    break
+                group.append((pb, pt, ptxt))
+                best = max(best, pt - pb)
+            elif is_continuation(ptxt, pt - pb, gap):
+                group.append((pb, pt, ptxt))
+            else:
+                break
+            j += 1
+        text_joined = " ".join(g[2] for g in group)
+        lv = level_of(best)
+        merged.append((group[-1][0], group[0][1], "#" * lv + " " + text_joined))
+        n += 1
+        i = j
+    return merged, n
+
+
+def _apply_links(text, links):
+    """链接内联/脚注降级。返回 (新文本, 内联数, 脚注列表)。
+
+    内联启发式(按序尝试,命中即止):
+      ① 矩形锚文本(上游给定且能在正文找到时);
+      ② URL 尾段文件名回查正文——下载链接(evolve-setup-*.zip)的可见标签
+         即文件名,内联为 [evolve-setup-claude_code.zip](url)。
+    均未命中 → 页尾脚注(不丢 URL)。
+    """
+    inlined = 0
+    footnotes = []
+    seen = set()
+    for anchor, url in links:
+        if url in seen:
+            continue
+        seen.add(url)
+        done = False
+        for cand in (anchor, _url_tail(url)):
+            if cand and 3 < len(cand) <= 120 and cand in text:
+                text = text.replace(cand, f"[{cand}]({url})", 1)
+                inlined += 1
+                done = True
+                break
+        if not done:
+            footnotes.append(url)
+    if footnotes:
+        text = text.rstrip() + "\n\n本页链接:\n" + "\n".join(f"- {u}" for u in footnotes)
+    return text, inlined, footnotes
+
+
+def _url_tail(url):
+    """URL 尾段(去 query/fragment 后的文件名),无尾段返回空。"""
+    tail = re.split(r"[?#]", url, 1)[0].rstrip("/")
+    tail = tail.rsplit("/", 1)[-1]
+    return tail if tail and "." in tail else ""
+
+
+def _body_height(pages_meta):
+    """正文字号行高估计: 全部行高的众数(0.5pt 粒度聚类);无数据返回 0。"""
+    counter = Counter()
+    for m in pages_meta:
+        for b, t, _txt in m["lines"]:
+            h = round(t - b, 1)
+            if h > 0:
+                counter[round(h * 2) / 2] += 1
+    if not counter:
+        return 0.0
+    return counter.most_common(1)[0][0]
+
+
+def main():
+    _utf8_stdio()
+    ap = argparse.ArgumentParser(description="PDF 文字层直提(pypdfium2,零 OCR,v0.6.4 结构增强)")
+    ap.add_argument("pdf", help="输入 PDF 路径")
+    ap.add_argument("--no-links", action="store_true", help="关闭链接提取")
+    ap.add_argument("--no-headers", action="store_true", help="关闭页眉页脚剥离")
+    ap.add_argument("--no-headings", action="store_true", help="关闭标题层级重建")
+    ap.add_argument("--no-tables", action="store_true", help="关闭线框表格重建")
+    ap.add_argument("--margin", type=float, default=MARGIN_RATIO, help="边距带比例(默认 0.12)")
+    args = ap.parse_args()
+    try:
+        pdf = pdfium.PdfDocument(args.pdf)
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": "PDF 打开失败: %s" % str(e)[:200]}, ensure_ascii=False))
+        return 1
+
+    notes = {
+        "links_inlined": 0, "links_footnote": 0, "stripped_lines": 0,
+        "orphan_merged": 0, "orphan_dropped": 0, "headings": 0, "body_height": 0.0,
+        "tables_rebuilt": 0, "char_rebuilt_pages": 0,
+    }
+    pages_meta = []
+    raw_pages = []  # [(no, page, tp, lines)]
+    for i in range(len(pdf)):
+        page = pdf[i]
+        try:
+            tp = page.get_textpage()
+        except Exception:
+            tp = None
+        lines = _page_lines(tp) if tp is not None else None
+        # v0.6.13 逐字符文字层兜底: 平均 <1.5 字符/行框(字符级定位) → 坐标重建阅读行
+        if lines and _page_avg_chars_per_box(lines) < 1.5 and tp is not None:
+            rebuilt = _char_rebuild_lines(tp)
+            if rebuilt and sum(len(t) for _, _, t in rebuilt) >= sum(len(t) for _, _, t in lines):
+                lines = rebuilt
+                notes["char_rebuilt_pages"] = notes.get("char_rebuilt_pages", 0) + 1
+        page_h = 0.0
+        try:
+            page_h = float(page.get_size()[1])
+        except Exception:
+            page_h = 0.0
+        if lines is None:
+            # 保底:行框 API 异常 → 旧版全文直提
+            try:
+                txt = tp.get_text_bounded() if tp is not None else ""
+            except Exception:
+                txt = ""
+            lines = [(0.0, 0.0, ln.strip()) for ln in (txt or "").splitlines() if ln.strip()]
+        raw_pages.append((i + 1, page, tp, lines))
+        pages_meta.append({"no": i + 1, "lines": lines, "page_h": page_h})
+
+    strip_set = set() if args.no_headers else _detect_headers_footers(pages_meta, args.margin)
+    body_h = 0.0 if args.no_headings else _body_height(pages_meta)
+    notes["body_height"] = body_h
+
+    pages = []
+    for no, page, tp, lines in raw_pages:
+        # v0.6.6 表格重建:线框网格 → md 表格;区域内文本行由表格块替代
+        tables = []
+        if not args.no_tables and table_rebuild is not None and tp is not None:
+            try:
+                tables = table_rebuild.rebuild_tables(page, tp)
+            except Exception:
+                tables = []
+        notes["tables_rebuilt"] = notes.get("tables_rebuilt", 0) + len(tables)
+        kept = []
+        for b, t, txt in lines:
+            cy = (b + t) / 2.0
+            if tables and any(t_top >= cy >= t_bot for (t_top, t_bot, _md) in tables):
+                continue  # 表格区域内文本,由 md 表格块替代
+            if _norm(txt) in strip_set:
+                notes["stripped_lines"] += 1
+                continue
+            kept.append((b, t, txt))
+        kept, merged, dropped = _merge_orphans(kept)
+        notes["orphan_merged"] += merged
+        notes["orphan_dropped"] += dropped
+        kept, headings = _apply_headings(kept, body_h)
+        notes["headings"] += headings
+        # 组装:普通行(自上而下)与表格块按 y 位置交错(表格顶 > 当前行顶 → 表格在上方,先插)
+        segs = []
+        ti = 0
+        for _b, t, txt in kept:
+            while ti < len(tables) and tables[ti][0] > t:
+                segs.append(tables[ti][2])
+                ti += 1
+            segs.append(txt)
+        while ti < len(tables):
+            segs.append(tables[ti][2])
+            ti += 1
+        text = "\n\n".join(segs)
+        if not args.no_links and tp is not None:
+            links = _page_links(pdf.raw, page.raw)
+            if links:
+                text, inlined, foot = _apply_links(text, links)
+                notes["links_inlined"] += inlined
+                notes["links_footnote"] += len(foot)
+        img_ratio = _page_img_ratio(page)
+        pages.append({"no": no, "text": text, "img_ratio": img_ratio})
+
+    print(json.dumps({"total": len(pages), "pages": pages, "notes": notes}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

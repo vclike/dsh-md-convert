@@ -3,14 +3,15 @@
 dsh-md-convert — PDF → PNG 渲染导出(vision 路由复用, T3 任务书生成的渲染底座)
 
 CLI:
-  python render_pages.py <pdf> <outDir> [--scale 2]
+  python render_pages.py <pdf> <outDir> [--scale 2] [--pages 5,7-9]
 
 行为:
-  - 将 PDF 每页渲染为 PNG 写入 <outDir>/p-01.png ... p-NN.png
+  - 将 PDF 指定页(缺省全部页)渲染为 PNG 写入 <outDir>/p-01.png ... p-NN.png
     (页码从 1 起,两位补零;超过 99 页自然扩展为三位,如 p-100.png)
   - 渲染口径与 lib/py/routing_ocr.py 一致: RGB、最长边限 MAX_SIDE=1600
   - stdout 输出**单行 JSON 清单**(消费端按行 JSON.parse):
-      {"ok":true,"pages":97,"dir":"<abs outDir>","files":["<abs p-01.png>", ...]}
+      {"ok":true,"pages":2,"pageList":[5,7],"dir":"<abs outDir>","files":["<abs p-05.png>","<abs p-07.png>"]}
+    files 与 pageList 按序一一对应;缺省全页时 pageList=[1..N](v0.6.4 起始终携带)
     失败时: {"ok":false,"error":"..."} 且退出码 1
 
 协议纪律:
@@ -63,15 +64,43 @@ def _log(msg):
     sys.stderr.flush()
 
 
+def _parse_pages(spec):
+    """解析 "5,7-9" 形态的页选择为升序去重列表;无效输入返回 None(全页)。"""
+    if not spec:
+        return None
+    pages = set()
+    try:
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                lo_i, hi_i = int(lo), int(hi)
+                if lo_i < 1 or hi_i < lo_i:
+                    return None
+                pages.update(range(lo_i, hi_i + 1))
+            else:
+                v = int(part)
+                if v < 1:
+                    return None
+                pages.add(v)
+    except ValueError:
+        return None
+    return sorted(pages) or None
+
+
 def main():
     _utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="render_pages.py",
-        description="将 PDF 每页渲染为 p-NN.png 并输出 JSON 清单(vision 路由复用)")
+        description="将 PDF 指定页渲染为 p-NN.png 并输出 JSON 清单(vision 路由复用)")
     ap.add_argument("pdf", help="输入 PDF 路径")
     ap.add_argument("out_dir", help="PNG 输出目录(不存在则创建)")
     ap.add_argument("--scale", type=float, default=2.0,
                     help="渲染倍率(1=72dpi,默认 2≈144dpi)")
+    ap.add_argument("--pages", default="",
+                    help="页选择,如 \"5,7-9\"(缺省渲染全部页)")
     args = ap.parse_args()
 
     try:
@@ -86,6 +115,13 @@ def main():
         _emit({"ok": False, "error": "读取页数失败: %s" % str(e)[:300]})
         return 1
 
+    # 页选择(v0.6.4 onlyPages 子集渲染):无效/越界回退全页
+    page_list = _parse_pages(args.pages) or list(range(1, total + 1))
+    page_list = [p for p in page_list if p <= total]
+    if not page_list:
+        _emit({"ok": False, "error": "页选择为空(共 %d 页)" % total})
+        return 1
+
     try:
         os.makedirs(args.out_dir, exist_ok=True)
     except Exception as e:
@@ -96,20 +132,20 @@ def main():
     files = []
     t0 = time.time()
     try:
-        for i in range(total):
-            img = _cap_max_side(pdf[i].render(scale=args.scale).to_pil().convert("RGB"))
-            path = os.path.join(out_dir_abs, "p-%02d.png" % (i + 1))
+        for done_no, pno in enumerate(page_list, 1):
+            img = _cap_max_side(pdf[pno - 1].render(scale=args.scale).to_pil().convert("RGB"))
+            path = os.path.join(out_dir_abs, "p-%02d.png" % pno)
             img.save(path, "PNG")
             files.append(path)
-            if (i + 1) == 1 or (i + 1) % 20 == 0 or (i + 1) == total:
-                _log("渲染 %d/%d 页 (%.1fs)" % (i + 1, total, time.time() - t0))
+            if done_no == 1 or done_no % 20 == 0 or done_no == len(page_list):
+                _log("渲染 %d/%d 页 (%.1fs)" % (done_no, len(page_list), time.time() - t0))
     except Exception as e:
         _emit({"ok": False,
-               "error": "渲染失败(第 %d 页附近): %s" % (len(files) + 1, str(e)[:300])})
+               "error": "渲染失败(第 %d 页附近): %s" % (page_list[len(files)] if len(files) < len(page_list) else -1, str(e)[:300])})
         return 1
 
-    _log("完成: %d 页 → %s (%.1fs)" % (total, out_dir_abs, time.time() - t0))
-    _emit({"ok": True, "pages": total, "dir": out_dir_abs, "files": files})
+    _log("完成: %d 页 → %s (%.1fs)" % (len(page_list), out_dir_abs, time.time() - t0))
+    _emit({"ok": True, "pages": len(page_list), "pageList": page_list, "dir": out_dir_abs, "files": files})
     return 0
 
 

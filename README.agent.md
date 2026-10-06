@@ -12,6 +12,19 @@
   2. 表格/公式区域占比 > 40%(可配 `vision.complexityRatio`)→ **vision 任务书**(`engine` 也可显式指定);
   3. 否则 → **页级并行本地 OCR**(NDJSON 流式,任意页数;OCR 类长任务自动转**后台作业**)。
 
+**安全护栏(v0.6.1)**:
+- **前台页数闸门**:`background=false` 且本地 OCR 页数 > `ocr.foregroundMaxPages`(默认 30)→
+  拒绝执行(`E_FOREGROUND_LIMIT`),返回替代路线(background/vision/resume)与 ETA——
+  前台长 OCR 会占满 CPU/内存拖垮整机,收到该错误请改走建议路线,不要硬闯。
+- **后台启动降级链**:后台启动被宿主拒绝时自动降级(带 owner → 无主后台 → 前台)并在
+  `warnings` 说明原因;`warnings` 含「无主启动」时,完成**不会**自动送达,须主动轮询 `job_output`。
+
+**引擎路由决策(v0.6.2,返回的 `decision` 字段会说明本次路线)**:
+- 有文字层 → markitdown 直提;markitdown 在宿主内失败 → pypdfium2 兜底(秒级,
+  纯文字无版面结构,`warnings` 注明原因)——**有文字层绝不 OCR**。
+- 无文字层 → 表格/公式占比 ≤40% 本地 OCR(后台优先,前台 30 页闸门);
+  \>40% vision 模型阅读(agent 编排子代理并行,复杂表格/印章质量更优)。
+
 **适用**:用户要求转 md、提取文档内容、批量转换。
 **不适用**:只需读内容用 `pdf_read`/`docx_read` 等;生成文档用 `docx_create`/`pdf_create` 等;视觉保真(字体/颜色)Markdown 表达不了,直接告知用户。
 

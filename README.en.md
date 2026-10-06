@@ -197,7 +197,8 @@ Plugin config (`cordis.patch.yml`, validated by Schemastery, no hardcoding):
         engine: "auto"          # scanned-PDF engine routing: auto | local | vision
         ocr:
           python: ""            # Python interpreter (empty = auto-detect)
-          workers: 0            # parallel workers; 0 = default min(CPU,8); 1 = in-process fast path (sandbox/containers)
+          workers: 0            # parallel workers; 0 = resource-aware min(CPU,4,RAM budget); 1 = in-process fast path (sandbox/containers)
+          foregroundMaxPages: 30 # foreground OCR page gate; 0 = unlimited (over-limit rejects with background/vision/resume guidance)
           probeTimeoutMs: 120000
           runTimeoutMs: 7200000 # foreground OCR timeout (background jobs unbounded)
           etaPerPageSec: 15     # ETA estimate per page

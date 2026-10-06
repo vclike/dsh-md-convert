@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleMd, createOcrRun, estimateEtaSec, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
+import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
 
 function tmpDir(tag) {
@@ -103,7 +103,7 @@ test("assembleMd: 页号升序拼装 + 标题", () => {
 
 /* ---------------- ETA 标定(bench.md) ---------------- */
 
-test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按实际核数(F5)", () => {
+test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按资源感知默认(F5)", () => {
 	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)
 	assert.equal(estimateEtaSec(97, 1, 15), 1455);
 	// workers=4: 线性 364 + 开销 40 = 404 ∈ captain 标定区间 400-420s
@@ -114,10 +114,30 @@ test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开�
 	assert.equal(estimateEtaSec(0, 4), null);
 	assert.equal(estimateEtaSec(-1, 4), null);
 	assert.equal(estimateEtaSec(null, 4), null);
-	// F5: workers=0 → 按实际将用口径 min(CPU,8) 估算(不再视作单 worker 系统性高估)
-	const eff = Math.min(os.cpus()?.length || 4, 8);
+	// F5(v0.6.1): workers=0 → 按资源感知默认 defaultWorkers() 口径估算
+	// (旧 min(CPU,8) 口径与实际执行的 worker 数脱节,2026-10-05 事故后收紧)
+	const eff = defaultWorkers();
 	assert.equal(estimateEtaSec(97, 0, 15), Math.ceil((97 * 15) / eff) + (eff > 1 ? 40 : 0));
 	assert.ok(estimateEtaSec(97, 0, 15) < estimateEtaSec(97, 1, 15), "多核默认口径必须低于单 worker 口径");
+});
+
+/* ---------------- 资源感知默认 worker(v0.6.1) ---------------- */
+
+test("defaultWorkers: min(CPU, 4, 内存预算),内存未知回退上限,预算不足钳 1", () => {
+	const GB = 1024 ** 3;
+	// 22 核/32GB → min(22, 4, 12) = 4(2026-10-05 事故机:旧口径会给出 8)
+	assert.equal(defaultWorkers({ cpu: 22, totalMem: 32 * GB }), 4);
+	// 4GB 小内存机 → floor(4/2.5)=1
+	assert.equal(defaultWorkers({ cpu: 16, totalMem: 4 * GB }), 1);
+	// 8GB → floor(3.2)=3
+	assert.equal(defaultWorkers({ cpu: 8, totalMem: 8 * GB }), 3);
+	// 内存探查失败(0)→ 退化为 min(CPU, 4)
+	assert.equal(defaultWorkers({ cpu: 2, totalMem: 0 }), 2);
+	assert.equal(defaultWorkers({ cpu: 16, totalMem: 0 }), 4);
+	// 自定义上限
+	assert.equal(defaultWorkers({ cpu: 22, totalMem: 64 * GB, cap: 2 }), 2);
+	// 结果恒 ≥1
+	assert.equal(defaultWorkers({ cpu: 1, totalMem: 1 * GB }), 1);
 });
 
 /* ---------------- createOcrRun ---------------- */
@@ -351,6 +371,13 @@ test("createOcrRun: --resume 传给 Python 且 workers 透传", async () => {
 	assert.equal(captured.args[captured.args.indexOf("--workers") + 1], "3");
 	assert.equal(captured.args[captured.args.indexOf("--scale") + 1], "2");
 	assert.equal(captured.cmd, "py.exe");
+	// v0.6.1: workers=0 → Node 侧解析为资源感知默认并显式下传(单一事实源,Python 独立默认仅兜底 CLI)
+	await createOcrRun({
+		python: "py.exe", script: "parallel_ocr.py", pdf: "doc.pdf",
+		mdPath: join(dir, "doc.md"), statePath: join(dir, "doc.state.json"), progressPath: join(dir, "doc.progress.json"),
+		workers: 0, scale: 2, spawnStreamImpl: impl,
+	});
+	assert.equal(captured.args[captured.args.indexOf("--workers") + 1], String(defaultWorkers()));
 });
 
 /* ---------------- spawnStream 本体直测(F8;真实子进程,受限沙箱自动跳过) ---------------- */
@@ -377,13 +404,15 @@ test("spawnStream 直测:分帧/超时/终止(禁管道环境自动 skip,部署�
 	const timeout = spawnStream(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { onLine: () => {}, timeoutMs: 300 });
 	const timeoutResult = await timeout.promise;
 	assert.equal(timeoutResult.timedOut, true);
-	assert.equal(timeout.killed, true);
+	// F8-2 保真度修正:killed 在结案结果对象上(句柄只暴露 {promise,killTree},无 .killed 属性;
+	// 旧断言照测试替身形状写,开发沙箱 EPERM skip 从未真跑,2026-10-05 部署级环境首次暴露)
+	assert.equal(timeoutResult.killed, true);
 
 	// ③ 终止:abort → killTree,promise 结案且 timedOut 不置位
 	const controller = new AbortController();
 	const aborted = spawnStream(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { onLine: () => {}, signal: controller.signal });
 	setTimeout(() => controller.abort(new Error("test")), 150);
 	const abortResult = await aborted.promise;
-	assert.equal(aborted.killed, true);
+	assert.equal(abortResult.killed, true);
 	assert.notEqual(abortResult.timedOut, true, "中止路径不得置 timedOut(仅超时置位)");
 });

@@ -75,7 +75,9 @@ test("makeVisionBrief: 渲染→切批→提示词→plan.json 全链路(3 页�
 	assert.ok(r.planPath.endsWith(join("采购文件.vision", "plan.json")));
 	assert.equal(r.batches.length, 1);
 	const b = r.batches[0];
-	assert.deepEqual(b.pages, [1, 3]);
+	// v0.6.4 语义:pages 为完整页列表([1,2,3]),旧二元组 [1,3] 已弃用
+	assert.deepEqual(b.pages, [1, 2, 3]);
+	assert.deepEqual([b.from, b.to], [1, 3]);
 	assert.ok(b.promptFile.includes(join("prompts", "batch-01.md")));
 	assert.ok(b.outputFile.includes(join("outputs", "batch-01.md")));
 
@@ -100,7 +102,8 @@ test("makeVisionBrief: 渲染→切批→提示词→plan.json 全链路(3 页�
 	assert.equal(plan.batches[0].imageFiles.length, 3);
 	assert.ok(plan.outputContract.anchorRegex.includes("<!--PAGE:"));
 	assert.equal(plan.assemble.tool, "md_convert_assemble");
-	assert.ok(plan.assemble.finalOutput.endsWith(join(outDir, "采购文件.md")));
+	// v0.6.11:全页 vision 产物加 -vision 后缀(与直提版并存,防覆盖)
+	assert.ok(plan.assemble.finalOutput.endsWith(join(outDir, "采购文件-vision.md")));
 	assert.ok(existsSync(join(outDir, "采购文件.vision", "pages")));
 });
 
@@ -113,7 +116,12 @@ test("makeVisionBrief: 10 页批 4 → 3 批,各批 imageFiles 与页段对齐",
 	});
 	assert.equal(r.batches.length, 3);
 	const plan = JSON.parse(readFileSync(r.planPath, "utf8"));
-	assert.deepEqual(plan.batches.map((b) => b.pages), [[1, 4], [5, 8], [9, 10]]);
+	// v0.6.4 语义:pages 为完整页列表(旧版为 [from,to] 二元组,子集计划会抹掉中间页)
+	assert.deepEqual(plan.batches.map((b) => b.pages), [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10]]);
+	assert.deepEqual(plan.batches.map((b) => [b.from, b.to]), [[1, 4], [5, 8], [9, 10]]);
+	assert.deepEqual(plan.batches.map((b) => b.pageList), [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10]]);
+	assert.deepEqual(plan.source.pageList, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+	assert.equal(plan.source.subset, false);
 	assert.deepEqual(plan.batches[2].imageFiles.length, 2);
 	// 第 2 批首图 = 第 5 页
 	assert.ok(plan.batches[1].imageFiles[0].endsWith("p-05.png"));
