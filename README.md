@@ -25,10 +25,19 @@
 
 ## 环境依赖
 
-- **Node.js ≥ 18**
-- **PDF 文字层引擎**(推荐):`pip install pymupdf4llm`(可选依赖,未安装时自动降级自研 pypdfium2 链 + 质量信号建议)
-- 老格式转换(`.doc/.xls/.ppt`):Windows 需本机装有 **WPS Office** 或 **Microsoft Office**(COM 自动探测);Linux/macOS 需 **LibreOffice**(`apt install libreoffice`,自动探测 `soffice`)
-- **扫描件 OCR 以 CPU 为主、轻量模型优先、性价比优先**:模块化路由流水线——`PP-DocLayout-L` 版面分析(轻量)按区域路由,**文字走 RapidOCR(PP-OCRv6 ONNX,最快)**,表格走 SLANet+RT-DETR,**公式走 FormulaNet-Plus-S(轻量)**;标题层级由版面模型识别。质量有基本保证,但为效率做了取舍(如复杂版面/超小字号可能识别不全)
+### 依赖分级一览
+
+| 级别 | 依赖 | 安装 | 缺失后果 |
+| --- | --- | --- | --- |
+| **必需** | Node.js ≥ 18 | 手动 | 插件不运行 |
+| **必需**(PDF 路由) | Python 3.10+ | 手动(`python`/`py`/`python3` 自动探测) | PDF 无法转换 |
+| **推荐**(PDF 文字层主链) | `pip install pymupdf4llm pypdfium2` | **首次转换自动安装并重试**;也可手动 | 自动降级:文字层主链不可用 → markitdown 兜底(质量下降),warnings 附修复命令 |
+| **按需**(扫描件/纯图) | OCR 全家桶:`paddlepaddle` `paddleocr` `paddlex[ocr]` `rapidocr` `onnxruntime` + 模型(数百 MB) | **首次转换自动检测+默认自动安装**(`dsh-md-convert deps` 可手动) | 扫描件路由不可用 → 建议 `engine:"vision"` |
+| **按需**(老格式 `.doc/.xls/.ppt`) | Windows: WPS Office 或 Microsoft Office;Linux/macOS: LibreOffice | 手动 | 老格式不可转换 |
+
+### 扫描件 OCR 模型说明
+
+- **CPU 为主、轻量模型优先、性价比优先**:模块化路由流水线——`PP-DocLayout-L` 版面分析(轻量)按区域路由,**文字走 RapidOCR(PP-OCRv6 ONNX,最快)**,表格走 SLANet+RT-DETR,**公式走 FormulaNet-Plus-S(轻量)**;标题层级由版面模型识别。质量有基本保证,但为效率做了取舍(如复杂版面/超小字号可能识别不全)
 - Linux 无头服务器建议安装中文字体 `fonts-noto-cjk`
 - **模型本地化**:OCR 模型首次经 `dsh-md-convert deps` 联网下载到本地缓存(`~/.paddlex/official_models/`,约数百 MB);**之后运行完全离线**,不做任何网络检查,断网可正常 OCR
 

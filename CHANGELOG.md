@@ -3,6 +3,37 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.1] - 2026-10-06
+
+**依赖标注与自动补装**(发版后自查发现的缺口):PDF 文字层主链依赖
+(pypdfium2/pymupdf4llm)此前无检测与提示——新用户环境缺失时直提静默降级
+到 markitdown 兜底,用户无从知晓。
+
+### Added(新增)
+
+- **依赖缺失自动安装+重试**:直提失败且原因匹配 No module named
+  (pypdfium2/pymupdf4llm)时,自动 pip 补装并重试一次
+  (`depsAutoInstall:false` 可禁);仍失败则 warnings 附精确 pip 修复命令。
+- README **依赖分级一览表**(必需/推荐/按需三级,缺失后果列明)。
+- PY_MODULES 纳入 pymupdf4llm(`dsh-md-convert deps` 命令自动覆盖)。
+
+## [0.7.0] - 2026-10-06
+
+**五引擎置信度驱动体系正式版**(0.6.1→0.6.15 十四个版本的收束,独立仓库首发)。
+完整说明见 [Release v0.7.0](https://github.com/vclike/dsh-md-convert/releases/tag/v0.7.0)。
+
+### 核心能力
+
+- PDF 文字层:**PyMuPDF4LLM 段落合并直提**(主)+ **pypdfium2 结构增强链**
+  (表格重建/标题层级/链接保留/页眉页脚剥离/PAGE 锚点/逐页图像占比)+ **逐字符
+  定位坐标重建**(Word 导出字符级定位,纯几何零 token)
+- **质量信号闭环**:assessMdQuality(表格碎片化/逐字符/列抖动)→ score<70
+  自动引擎接管 → `[质量修复]`/`[质量信号]` 透明告警
+- 扫描件:探针分流(复杂度 ≤40% 本地 OCR / >40% vision 任务书)+ 前台闸门
+  + 三级降级链
+- Office:markitdown 子进程桥(XML 无损映射)
+- 可观测性:elapsedMs / decision.timings / progress.pageSeconds / quality
+
 ## [0.6.15] - 2026-10-06
 
 **段落合并调度修复 + engine 显式选项**(用户实证驱动:五粮液一段话被直提拆成

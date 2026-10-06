@@ -118,3 +118,14 @@ test("文字层⑦: pymupdf4llm 未安装 → 优雅跳过,直提产物保留 + 
 	assert.equal(r.via, "pypdfium2", "依赖缺失应保留直提产物");
 	assert.ok(r.warnings.some((w) => w.includes("[质量信号]")), r.warnings);
 });
+
+test("文字层⑧: python 缺 pypdfium2(v0.7.1) → 依赖缺失警告附精确 pip 命令", async () => {
+	const r = await convertPdfTextLayer("a.pdf", {
+		depsAutoInstall: false, // 测试不触发真实 pip 安装
+		impls: {
+			markitdown: async () => goodMd,
+			pythonText: async () => ({ ok: false, error: "extract_text 执行失败:ModuleNotFoundError: No module named 'pypdfium2'" }),
+		},
+	});
+	assert.ok(r.warnings.some((w) => w.includes("[依赖缺失]") && w.includes("pip install pypdfium2 pymupdf4llm")), JSON.stringify(r.warnings));
+});
