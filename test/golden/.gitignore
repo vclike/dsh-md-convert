@@ -1,2 +1,8 @@
 # golden 基线的产物目录(每次 --write/--check 重新生成,不入库)
 .out/
+
+# v0.7.12:外部数据集的**下载缓存**。
+# ⚠️ 内含 OmniDocBench.json(约 40MB)与中文页 PNG —— 既大又属"仅研究用途"的数据,
+#    绝不能入库。实测:漏掉这条 gitignore 时 `git status` 会出现 test/golden/.cache/,
+#    一次 `git add -A` 就会把 40MB 提交进去。
+.cache/

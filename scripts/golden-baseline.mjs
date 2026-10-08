@@ -63,6 +63,20 @@ export const SAMPLE_CLASSES = [
 		light: false,
 	},
 	{ id: "dl-pdf-code-formula", file: "dl-code_and_formula.pdf", cls: "⑰代码与公式PDF", light: false },
+
+	// ── v0.7.12 OmniDocBench 简体中文页(⚠️ 数据集"仅研究用途、禁止商用" -> **仅本地,不入库**)──
+	// 由 12 张中文页图片封装成 PDF(数据集只提供图片,无 PDF),覆盖 5 种来源
+	// (exam_paper/newspaper/book/magazine/colorful_textbook)与 5 种版式
+	// (单栏/双栏/三栏/1andmore/other),其中 11 页含表格。
+	// 实测约 10s/页 -> slow,需 MDC_GOLDEN_SCAN=1。
+	{
+		id: "zh-omnidocbench",
+		file: "zh-omnidocbench-12p.pdf",
+		cls: "⑱中文页(OmniDocBench)",
+		light: false,
+		slow: true,
+		opts: { engine: "local" },
+	},
 ];
 
 /**
