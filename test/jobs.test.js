@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, parseAnchoredPages, parseNdjsonLine } from "../lib/core/jobs.js";
+import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, parseAnchoredPages, parseNdjsonLine, stateKeyFor } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
 
 function tmpDir(tag) {
@@ -292,6 +292,72 @@ test("createOcrRun: F3 收尾对账——state 标 done 而 md 缺页 → warnin
 	const md = readFileSync(mdPath, "utf8");
 	assert.ok(md.includes("仅此页到达"));
 	assert.ok(md.startsWith("# doc"));
+});
+
+test("createOcrRun(W3-2): 键不匹配 → 清旧状态且不预播种(绝不拿旧结果)", async () => {
+	const dir = tmpDir("keymiss");
+	const mdPath = join(dir, "doc.md");
+	const statePath = join(dir, "doc.state.json");
+	const progressPath = join(dir, "doc.progress.json");
+	// 模拟"同名另存/上一版算法留下"的旧产物:md 有页 9,state 带不匹配的键
+	writeFileSync(mdPath, `${pageBlock(9, "旧文档残留内容")}\n`, "utf8");
+	writeFileSync(statePath, JSON.stringify({
+		pdf: "old.pdf", total: 1, scale: 2, stateKey: "vOLD|s2|deadbeef",
+		pages: { 9: "done" }, pageWarnings: {},
+	}), "utf8");
+	const script = {
+		lines: [
+			{ delay: 2, line: line({ event: "start", total: 1 }) },
+			{ delay: 2, line: line({ event: "page", no: 1, md: pageBlock(1, "新内容"), stats: {} }) },
+			{ delay: 2, line: line({ event: "done", warnings: [] }) },
+		],
+	};
+	let seenArgs = null;
+	const impl = makeFake(script);
+	const r = await createOcrRun({
+		python: "python", script: "p.py", pdf: join(dir, "指纹取不到的旧名.pdf"),
+		mdPath, statePath, progressPath, title: "# doc",
+		spawnStreamImpl: (c, a, o) => { seenArgs = a; return impl(c, a, o); },
+	});
+	assert.equal(r.ok, true);
+	assert.ok(!(existsSync(statePath) && readFileSync(statePath, "utf8").includes("deadbeef")),
+		"键不匹配的旧状态必须被清掉");
+	const md = readFileSync(mdPath, "utf8");
+	assert.ok(md.includes("新内容"), "新页必须写入");
+	assert.ok(!md.includes("旧文档残留内容"), "绝不能从旧 md 预播种");
+	assert.ok(!(seenArgs ?? []).includes("--state-key"), "取不到指纹时不得传键");
+});
+
+test("createOcrRun(W3-2): 键匹配 + md 有锚点页 → 默认复用(不重 OCR、不删状态)", async () => {
+	const dir = tmpDir("keyhit");
+	const pdfPath = join(dir, "doc.pdf");
+	const mdPath = join(dir, "doc.md");
+	const statePath = join(dir, "doc.state.json");
+	const progressPath = join(dir, "doc.progress.json");
+	writeFileSync(pdfPath, "PDF", "utf8"); // 只需可 stat 出指纹(fake spawn 不真读 PDF)
+	writeFileSync(mdPath, `${pageBlock(1, "已完成页内容")}\n`, "utf8");
+	writeFileSync(statePath, JSON.stringify({
+		pdf: pdfPath, total: 1, scale: 2, stateKey: stateKeyFor(pdfPath, 2),
+		pages: { 1: "done" }, pageWarnings: {},
+	}), "utf8");
+	// 复刻"Python 见 done 即跳过"→ 只发 start/done,不发 page
+	const script = {
+		lines: [
+			{ delay: 2, line: line({ event: "start", total: 1 }) },
+			{ delay: 2, line: line({ event: "done", warnings: [] }) },
+		],
+	};
+	let seenArgs = null;
+	const impl = makeFake(script);
+	const r = await createOcrRun({
+		python: "python", script: "p.py", pdf: pdfPath,
+		mdPath, statePath, progressPath, title: "# doc",
+		spawnStreamImpl: (c, a, o) => { seenArgs = a; return impl(c, a, o); },
+	});
+	assert.equal(r.ok, true);
+	assert.ok(readFileSync(mdPath, "utf8").includes("已完成页内容"), "复用必须保留已完成页");
+	assert.ok(existsSync(statePath), "键匹配的 state 不得被删除");
+	assert.ok((seenArgs ?? []).includes("--state-key"), "键匹配时必须把键传给 Python");
 });
 
 test("createOcrRun: 超时 → E_OCR_TIMEOUT(无 signal 场景)", async () => {

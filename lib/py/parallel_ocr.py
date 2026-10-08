@@ -237,13 +237,22 @@ def _ocr_page(task):
 
 # ---------------------------------------------------------------- state
 
-def _load_state(path, pdf_abs, total, scale):
-    """读取并校验 state.json;不匹配/损坏时返回 None(旧状态被忽略)。"""
+def _load_state(path, pdf_abs, total, scale, state_key=None):
+    """读取并校验 state.json;不匹配/损坏时返回 None(旧状态被忽略)。
+
+    v0.7.2 W3-2: 新增 state_key(插件版本+渲染倍率+文档指纹,由 Node 侧计算)。
+    键不同 = 文档内容/参数/插件版本已变 → 绝不复用旧页
+    (避免"另存为同名 PDF"或"升级后改算法"仍拿旧结果)。
+    key 缺失(旧 state 或 CLI 直调)时退回 pdf/scale/total 校验。
+    """
     if not path or not os.path.exists(path):
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             st = json.load(f)
+        if state_key is not None and st.get("stateKey") != state_key:
+            _log("state.json 校验键不匹配(文档/参数/插件版本已变),忽略旧状态")
+            return None
         if (st.get("pdf") != pdf_abs or int(st.get("total", -1)) != total
                 or float(st.get("scale", -1)) != float(scale)):
             _log("state.json 与当前任务不匹配(pdf/scale/total),忽略旧状态")
@@ -352,10 +361,12 @@ def _run_ocr(pdf_path, args):
     # -- 断点续跑状态
     state = None
     if args.resume:
-        state = _load_state(args.resume, os.path.abspath(pdf_path), total_eff, args.scale)
+        state = _load_state(args.resume, os.path.abspath(pdf_path), total_eff, args.scale,
+                            getattr(args, "state_key", None))
         if state is None:
             state = {"pdf": os.path.abspath(pdf_path), "total": total_eff,
-                     "scale": args.scale, "pages": {}, "pageWarnings": {}}
+                     "scale": args.scale, "stateKey": getattr(args, "state_key", None),
+                     "pages": {}, "pageWarnings": {}}
         try:
             _save_state(args.resume, state)
         except Exception as e:
@@ -479,6 +490,9 @@ def main():
                          "1=进程内顺序执行,不启进程池,兼容受限环境与调试)")
     ap.add_argument("--resume", metavar="STATE_JSON", default=None,
                     help="断点续跑状态文件路径(每页完成即原子落盘)")
+    ap.add_argument("--state-key", default=None, metavar="KEY",
+                    help="state 复用校验键(插件版本+倍率+文档指纹,由 Node 侧计算);"
+                         "键不同则忽略旧状态,缺失则退回 pdf/scale/total 校验")
     ap.add_argument("--limit-pages", type=int, default=0, metavar="N",
                     help="只处理前 N 页(冒烟/抽样用;0=不限)")
     ap.add_argument("--probe", metavar="PAGES", default=None,
