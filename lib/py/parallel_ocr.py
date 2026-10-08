@@ -230,14 +230,18 @@ def route_page_stats(engine, img_pil, boxes):
             elif label in FORMULA_LABELS:
                 stats["formulas"] += 1
                 try:
-                    fres = engine.formula.predict(np.array(crop))
+                    # v0.7.14 修复:必须走 `formula_engine()`,**不能**直接用 `engine.formula`。
+                    # 公式模型是懒加载的(routing_ocr.__init__ 里 `self.formula = None`,
+                    # 见 W3-5:251MB 不想急加载),而本函数此前直接取 `engine.formula`
+                    # —— 扫描件链路**从未调用过 formula_engine()**,该属性恒为 None,
+                    # 于是每个公式都抛 'NoneType' object has no attribute 'predict'。
+                    # 实测:装上 ftfy 后仍报同样的错 -> 根因不是缺依赖,而是**没初始化**。
+                    # routing_ocr.py 内部用的是 formula_engine(),所以只有扫描件链路受害。
+                    fres = engine.formula_engine().predict(np.array(crop))
                     latex = fres[0]["rec_formula"]
                     parts.append("$$ %s $$" % latex)
                 except Exception as e:
-                    # v0.7.13: 同 routing_ocr —— 产物只留中性占位,原因进 warnings。
-                    # 实测缺 `ftfy` 时每个公式都会失败,原文会变成
-                    # "$$ [公式识别失败: 'NoneType' object has no attribute 'predict' $$"
-                    # 这类内部实现细节,对用户毫无意义。
+                    # v0.7.13: 产物只留中性占位,原因进 warnings —— 内部实现细节不该出现在用户产物里
                     parts.append("$$[公式未识别]$$")
                     stats["formula_failed"] = stats.get("formula_failed", 0) + 1
                     stats.setdefault("formula_first_error", type(e).__name__ + ": " + str(e)[:120])

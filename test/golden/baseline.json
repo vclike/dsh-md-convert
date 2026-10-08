@@ -14,7 +14,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 16712
+		"ms": 16065
 	},
 	"textlayer-multi-img": {
 		"ok": true,
@@ -31,7 +31,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 9560
+		"ms": 9369
 	},
 	"scan-4p": {
 		"ok": true,
@@ -48,7 +48,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 36422
+		"ms": 33501
 	},
 	"office-cn-table": {
 		"ok": true,
@@ -65,7 +65,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 153
+		"ms": 149
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -82,7 +82,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 3735
+		"ms": 3669
 	},
 	"gbk-text": {
 		"ok": true,
@@ -99,7 +99,7 @@
 		"wraps": 2,
 		"wrapPer100": 50,
 		"badTableRows": 0,
-		"ms": 15
+		"ms": 14
 	},
 	"dl-word-tables": {
 		"ok": true,
@@ -116,7 +116,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 9,
-		"ms": 52
+		"ms": 48
 	},
 	"dl-tablecell": {
 		"ok": true,
@@ -133,7 +133,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 3,
-		"ms": 38
+		"ms": 32
 	},
 	"dl-lists": {
 		"ok": true,
@@ -150,7 +150,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 45
+		"ms": 49
 	},
 	"dl-headers": {
 		"ok": true,
@@ -167,7 +167,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 30
+		"ms": 29
 	},
 	"dl-hdrftr-firstpage": {
 		"ok": true,
@@ -184,7 +184,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 58
+		"ms": 57
 	},
 	"dl-eastasian-num": {
 		"ok": true,
@@ -201,7 +201,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 54
+		"ms": 55
 	},
 	"dl-word-sample": {
 		"ok": true,
@@ -218,7 +218,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 45
+		"ms": 43
 	},
 	"dl-pdf-4p": {
 		"ok": true,
@@ -235,7 +235,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 594
+		"ms": 568
 	},
 	"dl-pdf-multipage": {
 		"ok": true,
@@ -252,7 +252,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 532
+		"ms": 509
 	},
 	"dl-pdf-table-as-img": {
 		"ok": true,
@@ -269,7 +269,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 431
+		"ms": 419
 	},
 	"dl-pdf-code-formula": {
 		"ok": true,
@@ -286,14 +286,14 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 464
+		"ms": 477
 	},
 	"zh-omnidocbench": {
 		"ok": true,
 		"code": null,
 		"chain": "文字层(空) → parallel-ocr",
-		"chars": 26370,
-		"bodyChars": 23427,
+		"chars": 30673,
+		"bodyChars": 27525,
 		"cjkPer1k": 0,
 		"tables": 17,
 		"tableRows": 151,
@@ -303,6 +303,6 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 136484
+		"ms": 150736
 	}
 }

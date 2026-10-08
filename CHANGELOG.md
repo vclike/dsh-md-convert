@@ -3,6 +3,36 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.14] - 2026-10-09
+
+### Fixed(修复)
+
+- **扫描件链路的公式识别从未真正工作过**(根因不是缺依赖,而是**没初始化**)。
+  - 症状:每个公式都产出 `'NoneType' object has no attribute 'predict'`。
+  - 真因:公式模型是**懒加载**的(`routing_ocr.__init__` 里 `self.formula = None`,见 W3-5:
+    模型 251MB 不愿急加载),而 `parallel_ocr.py` 直接取 `engine.formula` —— 扫描件链路
+    **从未调用过 `formula_engine()`**,该属性恒为 `None`。
+    `routing_ocr.py` 内部用的是 `formula_engine()`,所以**只有扫描件链路受害**。
+  - 修复:改走 `engine.formula_engine()`。
+  - 验证:⑱ 中文样本 12 页 —— 真实 LaTeX 公式 **16 处**(原先全是占位符),
+    中性占位 **0** 处,内部报错 **0** 处;产物字符 **26370 → 30673(+4303)**。
+
+- **补装缺失依赖 `ftfy`**(Apache-2.0、纯 Python、仅依赖 `wcwidth`)。
+  paddleocr 公式管线在推理成功后还要过 paddlex 的 `token2str`,内部 `import ftfy`;
+  缺它则公式**必然**失败。注意:这是**第二个**原因 —— 只装 ftfy 而不修上面的懒加载调用,
+  实测仍报同样的错(两者都要)。
+
+- **缺依赖时给出可操作的提示**:`deps.js` 新增 `OPTIONAL_MODULES`(ftfy → 公式识别);
+  产物里出现 `$$[公式未识别]$$` 时,`warnings` 直接给出
+  `请执行 python -m pip install ftfy`,而不是让用户面对 `'NoneType' ... 'predict'`。
+
+### Added(新增测试)
+
+- `selftest_routing.py` 增加 6 项**公式懒加载回归防护**:入口存在、未调用时属性保持 `None`、
+  经 `formula_engine()` 能拿到引擎、首次调用才构造、二次调用复用、失败可观测接口存在。
+  用工厂函数做测试替身(不用 `__init__` 返回对象 —— 那违反 Python 语义)。
+  **负对照验证**:把调用方式回退成 `engine.formula` → 真转换的公式告警重现,护栏有效。
+
 ## [0.7.13] - 2026-10-09
 
 ### Fixed(修复)

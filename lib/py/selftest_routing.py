@@ -69,6 +69,44 @@ def main():
         good = got == want
         ok = ok and good
         print(("  [OK] " if good else "  [FAIL] ") + name + ("" if good else f"  (got={got!r} want={want!r})"))
+
+    # v0.7.14: 公式模型**懒加载**的回归防护。
+    # 缺陷:parallel_ocr 直接取 `engine.formula`,而该属性在 __init__ 里是 None(W3-5 懒加载),
+    #       扫描件链路从未调用 formula_engine() -> 恒为 None -> 每个公式都抛
+    #       'NoneType' object has no attribute 'predict'。
+    # 这里不加载真模型(太重),只断言"取公式引擎的入口存在且初始为 None"。
+    import routing_ocr as RO
+
+    eng = RO.RoutingOCR.__new__(RO.RoutingOCR)   # 绕开 __init__(会加载 layout/ocr 模型)
+    eng.formula = None
+    calls = []
+
+    def _fake_fr(**kw):
+        # 用工厂函数而非"__init__ 返回对象"—— 后者违反 Python 语义(TypeError)
+        calls.append(kw)
+        return type("FakeEngine", (), {"predict": staticmethod(lambda img: [{"rec_formula": "x^2"}])})()
+
+    eng.FormulaRecognition = _fake_fr
+    # 注意:这一条必须在**首次调用 formula_engine() 之前**断言,
+    # 否则属性已被赋值,断言 None 必然失败(写错过一次)。
+    pre_lazy = eng.formula
+    checks2 = [
+        ("公式: 懒加载入口存在", callable(getattr(RO.RoutingOCR, "formula_engine", None)), True),
+        ("公式: 未经 formula_engine() 时属性保持 None(未急加载)", pre_lazy, None),
+    ]
+    got = eng.formula_engine().predict(None)
+    checks2.append(("公式: 经 formula_engine() 可拿到引擎(不再是 None)", got[0]["rec_formula"], "x^2"))
+    checks2.append(("公式: 首次调用才构造模型(懒加载)", len(calls), 1))
+    eng.formula_engine()
+    checks2.append(("公式: 二次调用复用同一实例", len(calls), 1))
+    diag = getattr(eng, "formula_diagnostics", None)
+    checks2.append(("公式: 失败可观测接口存在", callable(diag), True))
+
+    for name, got2, want2 in checks2:
+        good = got2 == want2
+        ok = ok and good
+        print(("  [OK] " if good else "  [FAIL] ") + name + ("" if good else f"  (got={got2!r} want={want2!r})"))
+
     print("selftest_routing: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
