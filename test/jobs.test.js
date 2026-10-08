@@ -121,6 +121,37 @@ test("adaptiveEtaSec: 用本次实测逐页耗时推算剩余;证据不足返回
 	assert.equal(adaptiveEtaSec({ 1: 20 }, 1, 5, 0), Math.ceil((4 * 20) / defaultWorkers()));
 });
 
+test("速度:createOcrRun 给每个 worker 钉线程(默认 核数/worker 数,可显式 threads 覆盖)", async () => {
+	// 不钉线程时 N 路 worker × 满核线程互相抢(实测 2 路单页 39.8s → 6 路 94.1s)
+	const dir = tmpDir("threads");
+	const script = {
+		lines: [
+			{ delay: 1, line: line({ event: "start", total: 1 }) },
+			{ delay: 1, line: line({ event: "done", warnings: [] }) },
+		],
+	};
+	const run = async (extra) => {
+		let seen = null;
+		const impl = makeFake(script);
+		await createOcrRun({
+			python: "python", script: "p.py", pdf: "doc.pdf", workers: 4,
+			mdPath: join(dir, "d.md"), statePath: join(dir, "s.json"), progressPath: join(dir, "p.json"),
+			spawnStreamImpl: (c, a, o) => { seen = o; return impl(c, a, o); },
+			...extra,
+		});
+		return seen;
+	};
+	const cpu = os.cpus?.()?.length || 4;
+	const opts = await run({});
+	assert.equal(opts.env?.DSH_OCR_THREADS, String(Math.max(1, Math.floor(cpu / 4))));
+	assert.equal(opts.env?.OMP_NUM_THREADS, opts.env?.DSH_OCR_THREADS);
+	assert.equal(opts.env?.MKL_NUM_THREADS, opts.env?.DSH_OCR_THREADS);
+	assert.ok(Object.keys(opts.env ?? {}).length > 4, "必须带上原进程环境(不能只给这几个变量)");
+	// 显式覆盖
+	const opts2 = await run({ workers: 8, threads: 3 });
+	assert.equal(opts2.env?.DSH_OCR_THREADS, "3");
+});
+
 test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按资源感知默认(F5)", () => {
 	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)(显式传 15 保持旧标定用例可回归)
 	assert.equal(estimateEtaSec(97, 1, 15), 1455);

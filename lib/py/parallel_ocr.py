@@ -157,11 +157,32 @@ _ENGINE = None  # worker 进程内全局,initializer 加载一次,跨任务复�
 
 
 def _init_worker():
-    """Pool initializer: 每个worker进程加载一次模型(Windows spawn 安全)。"""
+    """Pool initializer:每个 worker 进程**先钉住线程数**,再加载模型(Windows spawn 安全)。
+
+    v0.7.3 速度修复(实测,8 页真实扫描片段 / 22 核):
+      2 路: 单页中位 39.8s,页耗时合计 296s
+      4 路: 单页中位 70.9s,合计 521s
+      6 路: 单页中位 94.1s,合计 715s   ← worker 越多、单页越慢、总 CPU 工时越大
+    根因:此前本目录**完全没有线程控制** —— paddle/MKL/OpenMP 默认各自吃满所有核,
+    N 路 worker 就是 N×核数 线程互相抢(典型超订)。
+
+    线程数由父进程(Node)经 `DSH_OCR_THREADS` 下发,默认 floor(核数 / worker 数);
+    OMP/MKL 必须在 **import numpy/paddle 之前**生效,父进程 spawn 时就设好环境变量,
+    这里再兜底一次(直接命令行运行本脚本时没有父进程下发)。
+    """
+    n = int(os.environ.get("DSH_OCR_THREADS") or 0)
+    if n > 0:
+        for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            os.environ.setdefault(k, str(n))
+        try:
+            import paddle
+            paddle.set_num_threads(n)
+        except Exception:
+            pass
     global _ENGINE
     t0 = time.time()
     _ENGINE = RoutingOCR()
-    _log("worker pid=%d 模型加载完成 (%.1fs)" % (os.getpid(), time.time() - t0))
+    _log("worker pid=%d 线程=%s 模型加载完成 (%.1fs)" % (os.getpid(), n or "auto", time.time() - t0))
 
 
 def route_page_stats(engine, img_pil, boxes):
@@ -170,45 +191,54 @@ def route_page_stats(engine, img_pil, boxes):
     textChars=文字+标题区域识别出的字符总数。
 
     逻辑必须与 routing_ocr.route_page 保持一致;改动路由行为时两处同步。
+
+    v0.7.3 速度修复:整页先做**一次** RapidOCR(begin_page),所有区域/单元格复用这批行。
+    实测整改前文本页 36 次区域调用/2 页、每次 1.44s(每次都在重做 DBNet 检测),
+    占单页耗时 44.6%;而 worker 扩展实验证明"加 worker 完全无效"(2~8 路墙钟 168~179s),
+    故唯一的提速杠杆就是砍掉这份重复检测。
     """
     parts = []
     stats = {"tables": 0, "formulas": 0, "textChars": 0}
-    for b in sorted(boxes, key=lambda x: (x["coordinate"][1], x["coordinate"][0])):
-        label = b["label"]
-        rx1, ry1, rx2, ry2 = [int(v) for v in b["coordinate"]]
-        pad = adaptive_pad(b, boxes) if label in ROUTE_TEXT_ALL else 5
-        x1, y1 = max(0, rx1 - pad), max(0, ry1 - pad)
-        x2, y2 = min(img_pil.width, rx2 + pad), min(img_pil.height, ry2 + pad)
-        crop = img_pil.crop((x1, y1, x2, y2))
-        if label in ROUTE_TEXT_ALL:
-            text = engine.ocr_text_region(crop, b["coordinate"], x1, y1)
-            if text.strip():
-                stats["textChars"] += len(text.strip())
-                if label in ROUTE_TITLE:
-                    parts.append("## " + text.strip().replace("\n", " ").strip())
-                else:
-                    parts.append(text.strip())
-        elif label == "table":
-            stats["tables"] += 1
-            try:
-                cls_res = engine.table_cls.predict(np.array(crop))[0]
-                scores = cls_res["scores"][0]
-                idx = int(np.argmax(scores))
-                names = cls_res["label_names"]
-                wired = bool(names[idx].startswith("wired")) if names and len(names) > idx else True
-                parts.append(engine.table_full(crop, wired, 0))
-            except Exception as e:
-                parts.append("[表格识别失败: %s]" % str(e)[:80])
-        elif label in FORMULA_LABELS:
-            stats["formulas"] += 1
-            try:
-                fres = engine.formula.predict(np.array(crop))
-                latex = fres[0]["rec_formula"]
-                parts.append("$$ %s $$" % latex)
-            except Exception as e:
-                parts.append("$$ [公式识别失败: %s] $$" % str(e)[:80])
-        elif label in STAMP_LABELS:
-            parts.append("<!-- 印章 -->")
+    engine.begin_page(img_pil)
+    try:
+        for b in sorted(boxes, key=lambda x: (x["coordinate"][1], x["coordinate"][0])):
+            label = b["label"]
+            rx1, ry1, rx2, ry2 = [int(v) for v in b["coordinate"]]
+            pad = adaptive_pad(b, boxes) if label in ROUTE_TEXT_ALL else 5
+            x1, y1 = max(0, rx1 - pad), max(0, ry1 - pad)
+            x2, y2 = min(img_pil.width, rx2 + pad), min(img_pil.height, ry2 + pad)
+            crop = img_pil.crop((x1, y1, x2, y2))
+            if label in ROUTE_TEXT_ALL:
+                text = engine.ocr_text_region(crop, b["coordinate"], x1, y1)
+                if text.strip():
+                    stats["textChars"] += len(text.strip())
+                    if label in ROUTE_TITLE:
+                        parts.append("## " + text.strip().replace("\n", " ").strip())
+                    else:
+                        parts.append(text.strip())
+            elif label == "table":
+                stats["tables"] += 1
+                try:
+                    cls_res = engine.table_cls.predict(np.array(crop))[0]
+                    scores = cls_res["scores"][0]
+                    idx = int(np.argmax(scores))
+                    names = cls_res["label_names"]
+                    wired = bool(names[idx].startswith("wired")) if names and len(names) > idx else True
+                    parts.append(engine.table_full(crop, wired, 0, page_offset=(x1, y1)))
+                except Exception as e:
+                    parts.append("[表格识别失败: %s]" % str(e)[:80])
+            elif label in FORMULA_LABELS:
+                stats["formulas"] += 1
+                try:
+                    fres = engine.formula.predict(np.array(crop))
+                    latex = fres[0]["rec_formula"]
+                    parts.append("$$ %s $$" % latex)
+                except Exception as e:
+                    parts.append("$$ [公式识别失败: %s] $$" % str(e)[:80])
+            elif label in STAMP_LABELS:
+                parts.append("<!-- 印章 -->")
+    finally:
+        engine.end_page()
     return parts, stats
 
 

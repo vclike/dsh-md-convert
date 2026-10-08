@@ -216,6 +216,32 @@ class RoutingOCR:
         # "懒加载各子模型"不符(表格结构/单元格早已懒加载)。
         self.formula = None
         self.rapid = RapidOCR()
+        # v0.7.3 速度修复:整页一次 OCR 的上下文(None=逐区域模式)。
+        # 实测文本页 18 次区域调用 = 26s/页,其中 DBNet **检测被重复 18 次**;
+        # begin_page() 做一次整页检测+识别,区域/单元格再按几何复用同一批行。
+        self._page_lines = None
+        self._per_region = os.environ.get("DSH_OCR_PER_REGION") == "1"  # A/B 与回退开关
+
+    def begin_page(self, img_pil):
+        """整页一次 RapidOCR,供本页所有区域/单元格复用(v0.7.3)。
+
+        为什么:worker 扩展实验证明"加 worker 无效"(2/4/6/8 路墙钟 168~179s,吞吐恒 ~21s/页)
+        —— 单页 CPU 已吃满机器;而单页耗时的 44.6% 是**每区域一次** rapid() 调用
+        (36 次/2 页,每次 1.44s),每次都重做检测。整页检测一次即可,识别次数不变。
+        `DSH_OCR_PER_REGION=1` 可强制回旧行为(A/B 与出问题时的回退)。
+        """
+        self._page_lines = None
+        if self._per_region:
+            return
+        res = self.rapid(np.array(img_pil))
+        txts = getattr(res, "txts", None)
+        boxes = getattr(res, "boxes", None)
+        self._page_lines = (list(txts) if txts is not None else [],
+                            list(boxes) if boxes is not None else [])
+
+    def end_page(self):
+        """清掉整页 OCR 上下文(keep 引用会白占内存)"""
+        self._page_lines = None
 
     def formula_engine(self):
         """公式模型按需加载(v0.7.2 W3-5),首次使用时构建并在本实例内复用。"""
@@ -226,14 +252,23 @@ class RoutingOCR:
     # ---------- 路由 ----------
     def ocr_text_region(self, crop, region_box, offset_x, offset_y):
         """文字区域: RapidOCR + 按原始区域过滤文本行
-        offset_x/offset_y 为裁图左上角在页面坐标系中的偏移"""
-        res = self.rapid(np.array(crop))
-        txts = getattr(res, "txts", None)
-        boxes = getattr(res, "boxes", None)
-        if txts is None:
-            txts = []
-        if boxes is None:
-            boxes = []
+        offset_x/offset_y 为裁图左上角在页面坐标系中的偏移
+
+        v0.7.3:若已 begin_page() 做完整页 OCR,则**直接复用整页行**(行坐标本就是页面坐标,
+        故偏移取 0),不再对裁图重复检测。
+        """
+        if self._page_lines is not None:
+            txts, boxes = self._page_lines
+            ox = oy = 0.0
+        else:
+            res = self.rapid(np.array(crop))
+            txts = getattr(res, "txts", None)
+            boxes = getattr(res, "boxes", None)
+            if txts is None:
+                txts = []
+            if boxes is None:
+                boxes = []
+            ox, oy = offset_x, offset_y
         rx1, ry1, rx2, ry2 = [float(v) for v in region_box]
         kept = []
         for line, box in zip(txts, boxes):
@@ -243,12 +278,12 @@ class RoutingOCR:
             ys = [float(p[1]) for p in box]
             if not xs or not ys:
                 continue
-            cx, cy = sum(xs) / len(xs) + offset_x, sum(ys) / len(ys) + offset_y  # 换算回页面坐标
+            cx, cy = sum(xs) / len(xs) + ox, sum(ys) / len(ys) + oy  # 换算回页面坐标
             if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
                 kept.append(str(line).strip())
         return "\n".join(kept)
 
-    def table_full(self, crop, wired, depth=0):
+    def table_full(self, crop, wired, depth=0, page_offset=None):
         """表格: SLANet 结构 + RT-DETR 单元格 + 整表 RapidOCR 填格; 单列→递归版面"""
         key = "wired" if wired else "wireless"
         if key not in self.structs:
@@ -278,13 +313,19 @@ class RoutingOCR:
                        key=lambda b: (b["coordinate"][1], b["coordinate"][0]))
         if not cells:
             return "[表格:未检出单元格]"
-        res = self.rapid(np.array(crop))
-        txts = getattr(res, "txts", None)
-        bxs = getattr(res, "boxes", None)
-        if txts is None:
-            txts = []
-        if bxs is None:
-            bxs = []
+        if self._page_lines is not None and page_offset is not None:
+            # v0.7.3 速度修复:复用整页行 —— 把行坐标折算到表格裁图坐标系(与 cell 同系)
+            txts, page_bxs = self._page_lines
+            off_x, off_y = page_offset
+            bxs = [[(float(p[0]) - off_x, float(p[1]) - off_y) for p in b] for b in page_bxs]
+        else:
+            res = self.rapid(np.array(crop))
+            txts = getattr(res, "txts", None)
+            bxs = getattr(res, "boxes", None)
+            if txts is None:
+                txts = []
+            if bxs is None:
+                bxs = []
         cell_xy = [(b["coordinate"][0], b["coordinate"][1], b["coordinate"][2], b["coordinate"][3]) for b in cells]
         cell_texts = [[] for _ in cells]
         for line, box in zip(txts, bxs):
@@ -320,10 +361,23 @@ class RoutingOCR:
             if txts is None:
                 txts = []
             return "\n".join(str(t).strip() for t in txts if str(t).strip())
-        return "\n\n".join(self.route_page(crop, sub_boxes, depth + 1))
+        # v0.7.3:递归用的是裁图坐标系,与整页行不同系 → 临时关闭整页上下文(否则区域过滤会错位)
+        saved, self._page_lines = self._page_lines, None
+        try:
+            return "\n\n".join(self.route_page(crop, sub_boxes, depth + 1))
+        finally:
+            self._page_lines = saved
 
     def route_page(self, img_pil, boxes, depth=0):
-        """对一张图像按版面区域路由 → md 片段列表"""
+        """对一张图像按版面区域路由 → md 片段列表
+
+        v0.7.3:depth==0(整页)时先做一次整页 OCR 供所有区域复用;递归(单列表格内部)
+        属于裁图坐标系,与整页行不同系,故临时关闭上下文退回逐区域模式(递归范围小)。
+        """
+        own_page = False
+        if depth == 0 and self._page_lines is None and not self._per_region:
+            self.begin_page(img_pil)
+            own_page = True
         parts = []
         for b in sorted(boxes, key=lambda x: (x["coordinate"][1], x["coordinate"][0])):
             label = b["label"]
@@ -345,7 +399,7 @@ class RoutingOCR:
                     idx = int(np.argmax(scores))
                     names = cls_res["label_names"]
                     wired = bool(names[idx].startswith("wired")) if names and len(names) > idx else True
-                    parts.append(self.table_full(crop, wired, depth))
+                    parts.append(self.table_full(crop, wired, depth, page_offset=(x1, y1)))
                 except Exception as e:
                     parts.append("[表格识别失败: %s]" % str(e)[:80])
             elif label in ("formula", "formula_title"):
@@ -357,6 +411,8 @@ class RoutingOCR:
                     parts.append("$$ [公式识别失败: %s] $$" % str(e)[:80])
             elif label in ("seal", "stamp"):
                 parts.append("<!-- 印章 -->")
+        if own_page:
+            self.end_page()
         return parts
 
 
