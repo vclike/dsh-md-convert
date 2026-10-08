@@ -27,6 +27,44 @@ SUSPECT_CELL_LEN = 200
 # 单元格内换行替换符: md 表格单元格不能含换行;替换为单个空格后由 CJK 归并统一收口
 CELL_NEWLINE_REPLACEMENT = " "
 
+# v0.7.2 W2-5: "疑似跨页切断表"的边界容差(pt)。
+# 判据经**正对照验证**(见 selftest_tables.py):2 页夹具中被分页切断的表(表底距页底 4pt、
+# 续接表距页顶 40pt、列数相同、重复表头)→ 抓到 1 对。60pt 容许页脚/页码占据的空间。
+CROSS_PAGE_BOUNDARY_PT = 60.0
+
+
+def _table_cols(md):
+    """md 表头行的列数(仅用于跨页配对观测;非精确解析)。"""
+    head = str(md or "").split("\n", 1)[0]
+    return max(0, head.count("|") - 1)
+
+
+def count_cross_page_pairs(per_page_tables, page_heights, margin=CROSS_PAGE_BOUNDARY_PT):
+    """统计"疑似被分页切断的表"对数(v0.7.2 W2-5,**只观测不合并**)。
+
+    为什么只观测:实测 3 份真实样本(c2 34p 14 表 / golden 9p 4 表 / 采购文件 97p 为扫描件)
+    跨页候选均为 **0** —— 在无实测需求时实现合并逻辑属功能膨胀。改为把需求变成可观测:
+    真出现时由上层透出告警,届时再按真实样本设计合并。
+
+    per_page_tables: 每页的 [(top, bottom, md)],pypdfium2 坐标(y 向上 ⇒ bottom 即距页底距离)
+    page_heights:    每页页高(与 per_page_tables 同序)
+    判据: 上一页最后一张表贴底 + 本页第一张表贴顶 + 两表列数相同。
+    """
+    n = 0
+    for i in range(1, len(per_page_tables)):
+        prev, cur = per_page_tables[i - 1], per_page_tables[i]
+        if not prev or not cur:
+            continue
+        prev_bottom = prev[-1][1]
+        cur_top = cur[0][0]
+        height = page_heights[i] if i < len(page_heights) else 0.0
+        if height <= 0:
+            continue
+        if prev_bottom <= margin and (height - cur_top) <= margin \
+                and _table_cols(prev[-1][2]) == _table_cols(cur[0][2]) > 0:
+            n += 1
+    return n
+
 
 def open_doc(pdf_path):
     """打开 PyMuPDF 文档(失败返回 None;调用方降级到自研几何法)。"""

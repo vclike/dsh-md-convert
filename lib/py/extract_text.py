@@ -526,6 +526,7 @@ def main():
         "char_rebuild_rejected_pages": 0,
         "strip_protected_pages": 0,
         "tables_pymupdf": 0, "tables_legacy": 0, "table_pages_legacy_pref": 0,
+        "cross_page_table_pairs": 0,   # v0.7.2 W2-5 观测:疑似被分页切断的表对数
     }
     # v0.7.2 W2-4: PyMuPDF find_tables 文档句柄(整册开一次;失败则全程退回自研几何法)
     mupdf_doc = None
@@ -580,6 +581,8 @@ def main():
     notes["body_height"] = body_h
 
     pages = []
+    tables_by_page = []   # v0.7.2 W2-5 观测:逐页表格(统计跨页切断候选)
+    page_heights = []
     for no, page, tp, lines in raw_pages:
         # v0.6.6 表格重建:线框网格 → md 表格;区域内文本行由表格块替代
         # v0.7.2 W2-4: 默认改用 PyMuPDF `find_tables()`(实测单元格干净、无跨列串接),
@@ -657,7 +660,16 @@ def main():
                 notes["links_inlined"] += inlined
                 notes["links_footnote"] += len(foot)
         img_ratio = _page_img_ratio(page)
+        tables_by_page.append(tables)
+        try:
+            page_heights.append(float(page.get_size()[1]))
+        except Exception:
+            page_heights.append(0.0)
         pages.append({"no": no, "text": text, "img_ratio": img_ratio})
+
+    # v0.7.2 W2-5: 跨页切断表候选计数(只观测不合并;实测真实样本 0 处,见 table_extract 注释)
+    if table_extract is not None:
+        notes["cross_page_table_pairs"] = table_extract.count_cross_page_pairs(tables_by_page, page_heights)
 
     print(json.dumps({"total": len(pages), "pages": pages, "notes": notes}, ensure_ascii=False))
     return 0
