@@ -78,6 +78,17 @@
     (extract_text / parallel_ocr / render_pages)都有 —— 未设 `PYTHONIOENCODING` 时(即插件
     宿主的真实环境)stdout 会以 **GBK** 写出中文,Node 按 UTF-8 解码即**乱码**。
     该问题由新单测在无环境变量下复现并修复。
+- **目录/批量输入**(W4-6):CLI 早已支持多文件(`convertMany`),但**目录**参数此前只会被
+  当成不支持的扩展名拒绝。现在 `dsh-md-convert <目录...> -o <输出目录>` 会展开为其中的
+  受支持文件批量转换,新增 `-r/--recursive` 递归子目录。
+  - **不静默丢文件**:跳过的条目逐条打印原因(不支持的扩展名 / 本工具产物
+    `*.state.json|*.progress.json|*.probe.json` / 无扩展名);隐藏项(`.` 开头)直接忽略。
+  - 目录模式跳过 `.md/.markdown`(几乎必然是本工具产物,再转一次只是把 md 抄成 md);
+    但**显式单文件传入 md 照旧转换**(用户明确要求就照做)。
+  - 稳定排序(按文件名),批量结果不随文件系统枚举顺序变化;空目录给出明确错误并退出 2。
+  - 顺带修一处告警噪声:**UTF-8 BOM 文件不再被报"非 UTF-8"**(BOM 本身就是合法 UTF-8,
+    Windows 记事本/PowerShell 常态),只剥 BOM 不告警 —— 由目录批量的端到端验证发现。
+    新增 `test/scan.test.js`(3 项)。
 
 ### Changed(变更)
 

@@ -55,4 +55,6 @@ test("W4-3: UTF-8 BOM 正常读取且 BOM 不残留在正文", async () => {
 	assert.ok(md.includes(GBK_TEXT));
 	assert.ok(!md.startsWith("\uFEFF"), "BOM 不得残留在正文开头");
 	assert.ok(!md.includes("\uFEFF"), "BOM 不得出现在任何位置");
+	// BOM 形态**仍是 UTF-8**:不得报"非 UTF-8"噪声告警
+	assert.ok(!(r.warnings ?? []).some((w) => w.includes("[编码]")), `BOM 文件不应有编码告警: ${JSON.stringify(r.warnings)}`);
 });
