@@ -139,6 +139,23 @@
     经真实链路得到 `跨页候选 = 1` —— 证明"真实样本 0 处"不是探测器失灵。
   - `lib/py/selftest_tables.py` 增 4 项(贴底贴顶同列数计 1 / 未贴底不计 / 列数不同不计 /
     中间空页不计)。
+- **页范围 `pages`**(W4-4):`md_convert({file, pages:"1-20,25"})` / CLI `--pages "1-20,25"`,
+  1 起页号、支持范围与混排。此前 `onlyPages` 只在 vision 路由生效 —— **文字层 PDF 完全无法限定页数**
+  (300 页招标文件只能整册转)。
+  - 新增 `lib/core/pagerange.js`(语法单一来源)+ `test/pagerange.test.js`(6 项)。
+  - 文字层双引擎都支持:`extract_text.py --pages`(采集循环前过滤)与
+    `pymupdf4llm_extract.py --pages`(映射为 pymupdf4llm 的 **0 起**页号)。
+  - **锚点保留原始页号**:子集提取时若按 `enumerate` 编号,第 5 页会被错编成 `01`;
+    pymupdf4llm 入口还额外校验"返回块数 == 请求页数",不符则拒绝(宁可不产出也不让锚点错位)。
+  - **越界必须报错,绝不静默丢弃**:`convertFile` 在转换前用 `pdfPageCount` 校验上界
+    —— 实测修复:`--pages 99`(文档 11 页)此前会**回落 markitdown 把整册转成功**(exit=0),
+    用户以为页范围生效;现在直接报错退出 1。`pages` 用于非 PDF 也会明确拒绝。
+  - 扫描件链路:`vision` 路由映射为 `onlyPages`(完整集合);本地 OCR 走 `--limit-pages`
+    (仅支持 `1-N` 前缀),其它形态**明确告警**"未生效"而不是静默按全篇转。
+  - 端到端实测(`verify_w44.py`):CLI `--pages 3-5` → 产物锚点 `[3,4,5]`;两个 python 入口
+    越界均报"请求的页码超出文档页数(共 11 页):99"。
+  - 实现中被抓出的两个自身错误:① `pdfPageCount` 是 **async 且两参**(漏 await/漏参都得到 0,
+    导致误报 E_OCR_DEPS);② 对 `const o` 整体重新赋值 → `E_UNKNOWN: Assignment to constant variable`。
 
 ### Changed(变更)
 

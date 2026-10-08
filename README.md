@@ -202,6 +202,9 @@ dsh-md-convert c2.pdf -o ./md --no-cjk-merge
 
 # v0.7.2:表格回到自研几何重建法(默认用 PyMuPDF find_tables,A/B 与回退用)
 python lib/py/extract_text.py c2.pdf --legacy-tables
+
+# v0.7.3:只转换指定页(1 起页号;文字层支持任意集合,扫描件只支持 1-N 前缀)
+dsh-md-convert 采购文件.pdf -o ./md --pages "1-20,25"
 ```
 
 完整选项见 `dsh-md-convert --help`。
@@ -263,6 +266,7 @@ md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision �
 | `background` | `auto`(默认)/`true`/`false` | OCR 类长任务后台作业化;**缺后台控制器时自动降级前台并附 warning,不失败**;文本层直提等快链路始终同步 |
 | `engine` | `auto`(默认)/`local`/`vision` | 扫描件引擎;auto=复杂度探针换轨(表格/公式占比>阈值→vision) |
 | `resume` | boolean | 断点续跑:接续 `.state.json` 已完成页,仅重试失败页 |
+| `pages` | 字符串,如 `"1-20,25"` | **v0.7.3**:只转换指定页(1 起页号,锚点保留原始页号)。文字层 PDF 支持任意页集合;vision 路由支持完整集合;扫描件本地 OCR 只支持"从第 1 页起的连续 N 页"(其它形态明确告警)。**越界报错** |
 
 **插件配置**(`cordis.patch.yml` / DSH 配置面板;工具参数可逐次覆盖同名项):
 

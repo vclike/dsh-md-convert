@@ -196,6 +196,7 @@ md_convert({ file: "scan.pdf", engine: "vision" })        // force vision briefs
 | `background` | `auto`(default)/`true`/`false` | OCR-class long tasks run as background jobs; **falls back to foreground with a warning when controllers are missing — never fails**; fast text-layer paths stay synchronous |
 | `engine` | `auto`(default)/`local`/`vision` | Scanned-PDF engine; auto = complexity-probe routing (table/formula ratio over threshold → vision) |
 | `resume` | boolean | Resume from `.state.json`: skip finished pages, retry failed ones only |
+| `pages` | string, e.g. `"1-20,25"` | **v0.7.3**: convert only these pages (1-based; anchors keep the original page numbers). Text-layer PDFs and the vision route accept any set; local scan OCR supports only a `1-N` prefix (anything else warns explicitly). Out-of-range fails instead of silently converting everything |
 
 Second tool: `md_convert_assemble({ planPath, review? })` — validates vision batch outputs
 (anchor coverage 1..N, no duplicates/cross-batch anchors, strict UTF-8, mojibake signatures,

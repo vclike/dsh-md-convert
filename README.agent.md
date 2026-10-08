@@ -64,6 +64,10 @@ md_convert({ "file": "scan.pdf", "engine": "vision", "outDir": "./md" })
 - `file`:绝对路径或相对工作区路径;`outDir` 缺省用会话工作区
 - `background`:`auto`(默认,OCR 类一律后台)/`true`/`false`(强制同步);缺后台控制器时**自动降级前台并附 warning,不会失败**
 - `engine`:`auto`(默认,探针换轨)/`local`/`vision`
+- `pages`(v0.7.3):`"1-20,25"` 只转换指定页(1 起,锚点保留原始页号)。**大文档优先用它**——
+  先把相关章节转出来,别为了 10 页把 300 页全跑一遍。文字层 PDF 与 vision 路由支持任意集合;
+  扫描件本地 OCR 只支持 `"1-N"`(前缀),其它形态会在 `warnings` 里明确说"未生效";
+  越界直接失败(`E_UNSUPPORTED_FORMAT`),不会静默输出全篇
 - 输出名 = 源文件名去扩展名 + `.md`;同名默认覆盖
 - 失败返回 `{ ok: false, code, file, error }`,`code` 是稳定错误码
 

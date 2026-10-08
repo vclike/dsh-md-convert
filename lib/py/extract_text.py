@@ -105,6 +105,41 @@ def _utf8_stdio():
             pass
 
 
+def _expand_pages(spec, total):
+    """页范围 → 1 起页号集合(None=全部页);越界抛 ValueError(v0.7.3 W4-4)。
+
+    语法与 lib/core/pagerange.js 保持一致(`1-20,25`);python 入口单独可用。
+    **不静默丢弃越界页**:用户要第 200 页而文档 30 页时,静默输出 30 页会让人误以为成功。
+    """
+    raw = str(spec or "").strip()
+    if not raw:
+        return None
+    sel = set()
+    for seg in raw.split(","):
+        s = seg.strip()
+        if not s:
+            continue
+        m = re.match(r"^(\d+)\s*-\s*(\d+)$", s)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a < 1 or b < 1 or a > b:
+                raise ValueError("页范围片段非法:%s(应形如 3-5)" % s)
+            sel.update(range(a, b + 1))
+            continue
+        if s.isdigit():
+            if int(s) < 1:
+                raise ValueError("页码必须从 1 开始:%s" % s)
+            sel.add(int(s))
+            continue
+        raise ValueError("无法识别的页范围片段:%s(示例 1-20,25)" % s)
+    if not sel:
+        raise ValueError("页范围为空:%s" % raw)
+    bad = sorted(n for n in sel if n > total)
+    if bad:
+        raise ValueError("请求的页码超出文档页数(共 %d 页):%s" % (total, "、".join(str(b) for b in bad[:8])))
+    return sel
+
+
 def _norm(text):
     """归一化用于跨页重复比较(去全部空白差异)。"""
     return re.sub(r"\s+", "", text or "")
@@ -501,6 +536,9 @@ def main():
     ap.add_argument("--no-tables", action="store_true", help="关闭线框表格重建")
     ap.add_argument("--legacy-tables", action="store_true",
                     help="只用自研几何法建表(v0.7.2 W2-4 前的行为;A/B 与回退用)")
+    ap.add_argument("--pages", default="", metavar="SPEC",
+                    help="只提取指定页(1 起;支持 1-20,25,30-32;空=全部页)。"
+                         "锚点保留**原始页号**;越界报错而非静默丢弃")
     ap.add_argument("--margin", type=float, default=MARGIN_RATIO, help="边距带比例(默认 0.12)")
     args = ap.parse_args()
     try:
@@ -534,7 +572,18 @@ def main():
         mupdf_doc = table_extract.open_doc(args.pdf)
     pages_meta = []
     raw_pages = []  # [(no, page, tp, lines)]
+    # v0.7.3 W4-4: 页范围(子集提取)。必须**在采集循环之前**解析;锚点仍用原始页号。
+    # 越界在此直接报错(不静默丢弃)。
+    try:
+        page_sel = _expand_pages(args.pages, len(pdf))
+    except ValueError as e:
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        return 1
+    if page_sel is not None:
+        notes["pages_selected"] = len(page_sel)
     for i in range(len(pdf)):
+        if page_sel is not None and (i + 1) not in page_sel:
+            continue  # v0.7.3 W4-4: 页范围之外的页整体跳过(不进入页眉/标题/表格统计)
         page = pdf[i]
         try:
             tp = page.get_textpage()
