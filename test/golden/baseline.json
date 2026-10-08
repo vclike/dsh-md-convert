@@ -14,7 +14,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 20154
+		"ms": 19281
 	},
 	"textlayer-multi-img": {
 		"ok": true,
@@ -31,7 +31,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 10652
+		"ms": 10599
 	},
 	"scan-4p": {
 		"ok": true,
@@ -48,7 +48,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 41084
+		"ms": 40718
 	},
 	"office-cn-table": {
 		"ok": true,
@@ -65,24 +65,24 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 216
+		"ms": 205
 	},
 	"bigtable-34p": {
 		"ok": true,
 		"code": null,
 		"chain": "pypdfium2(结构增强直提)",
-		"chars": 17504,
-		"bodyChars": 13516,
+		"chars": 18158,
+		"bodyChars": 13743,
 		"cjkPer1k": 0,
 		"tables": 13,
 		"tableRows": 85,
-		"headings": 66,
+		"headings": 69,
 		"anchors": 23,
 		"qualityScore": 100,
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 3768
+		"ms": 3760
 	},
 	"gbk-text": {
 		"ok": true,
@@ -99,6 +99,6 @@
 		"wraps": 2,
 		"wrapPer100": 50,
 		"badTableRows": 0,
-		"ms": 21
+		"ms": 23
 	}
 }

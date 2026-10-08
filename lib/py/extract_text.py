@@ -677,11 +677,19 @@ def main():
         notes["tables_rebuilt"] = notes.get("tables_rebuilt", 0) + len(tables)
         kept = []
         strip_dropped_here = 0
+        page_h_now = pages_meta[no - 1]["page_h"] if no - 1 < len(pages_meta) else 0.0
+        margin_now = args.margin
         for b, t, txt in lines:
             cy = (b + t) / 2.0
             if tables and any(t_top >= cy >= t_bot for (t_top, t_bot, _md) in tables):
                 continue  # 表格区域内文本,由 md 表格块替代
-            if _norm(txt) in strip_set:
+            # v0.7.10 P3: 判定是**带位置**的(只在边距带内收集候选),但原先应用时**不带位置** ——
+            # 只要文本在 strip_set 里,整页任何位置的同名行都会被剥掉。
+            # 实测(bigtable-34p p34): 12 个单字符 `"` 因为在边距带里出现过一次,
+            # 就把**页中部**(y≈0.48~0.60)的 12 行正文一起剥掉了 —— 纯误杀。
+            # 修复: 应用时补回同一个边距带约束,让"判定位置"与"剥离位置"一致。
+            in_zone = page_h_now > 0 and (t >= page_h_now * (1 - margin_now) or b <= page_h_now * margin_now)
+            if _norm(txt) in strip_set and in_zone:
                 strip_dropped_here += 1
                 continue
             kept.append((b, t, txt))
