@@ -1,4 +1,20 @@
-# golden 大样本是本地资产,不入库(见同目录 README.md);缺失时 test:golden 显式 SKIP 对应类别
-char-layer-11p.pdf
-textlayer-multi-img.pdf
-bigtable-34p.pdf
+# golden 样本目录的入库策略(v0.7.12 起改为**默认拒绝 + 白名单**)
+#
+# 背景:过去用"逐个列举"的方式忽略大样本,结果**新接入的外部样本只要不太大就会被自动提交**——
+# 实测 `scan-4p.pdf`(584KB)就是这么进了仓库。对"许可非商用"的外部数据集(如 OmniDocBench)
+# 这属于**再分发**,必须从机制上杜绝,而不是靠记性。
+#
+# 规则:默认全部忽略,只放行下面显式白名单里的条目。
+# 任何新增外部样本,默认**不入库**;确需入库的必须在此显式放行,并在 SOURCES.md 记录许可出处。
+
+*
+
+# ── 白名单:自生成的小样本(由 test/make_golden_samples.py 生成,许可自持)──
+!README.md
+!SOURCES.md
+!.gitignore
+!gbk-text.txt
+!office-cn-table.docx
+
+# ── 白名单:用户提供的真实文档(非商用用途样本,已在库)──
+!scan-4p.pdf
