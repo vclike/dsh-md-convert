@@ -62,6 +62,17 @@ URI_ACTION_TYPE = 3  # pdfium action type: URI
 # pdfium 页面对象类型:IMAGE 用 raw 常量(实证 =3;勿硬编码,TEXT=1/PATH=2/FORM=4)
 PAGEOBJ_IMAGE = getattr(pdfium_c, "FPDF_PAGEOBJ_IMAGE", 3) if pdfium_c else 3
 
+# 逐字符文字层重建的采纳基线比(v0.7.2 W1-1)
+#   旧基线 = _page_lines 的逐 rect get_text_bounded 之和;逐字符页的 per-char rect 相互重叠,
+#   同一字符会被多个 rect 重复取到 → 基线虚高约 10%,把正确的行重建判为"内容变少"而拒绝。
+#   新基线 = 页面真实非空白字符数(逐字符遍历,不重复计数)。
+#   真机校准(鹏瑞利 brief 11 页 / 2026-10-08,逐页探针):采纳页的 rebuilt/true 实测
+#   1.042~1.112(全部 >1,最小值出现在 p1/p11 的 25/24);取 0.90 留 ~13% 余量,
+#   真正劣化的重建(丢内容)会远低于此阈值。c2 34 页均不触发(avgbox 3.1~7.5),无误判。
+CHAR_REBUILD_MIN_RATIO = 0.90
+# 与 _char_rebuild_lines 同一字符数上限(保证比值口径一致)
+CHAR_REBUILD_MAX_CHARS = 50000
+
 
 def _utf8_stdio():
     """Windows 管道默认 GBK,JSON 输出强制 UTF-8。"""
@@ -106,7 +117,7 @@ def _char_rebuild_lines(tp):
     except Exception:
         return None
     chars = []
-    for i in range(min(n, 50000)):
+    for i in range(min(n, CHAR_REBUILD_MAX_CHARS)):
         ch = text[i] if i < len(text) else ""
         if not ch or ch.isspace():
             continue
@@ -156,6 +167,21 @@ def _page_avg_chars_per_box(lines):
     if not lines:
         return 99.0
     return sum(len(t) for _b, _t, t in lines) / len(lines)
+
+
+def _page_true_chars(tp):
+    """页面真实非空白字符数(v0.7.2 W1-1 的采纳基线)。
+
+    与 _char_rebuild_lines 同口径:同一字符数上限、跳过空白。
+    逐字符遍历 count_chars/get_text_range,不受 per-char rect 重叠导致的重复取值影响。
+    异常返回 0(调用方按"无法判定"处理)。
+    """
+    try:
+        n = min(tp.count_chars(), CHAR_REBUILD_MAX_CHARS)
+        text = tp.get_text_range(0, n)
+    except Exception:
+        return 0
+    return sum(1 for ch in text if ch and not ch.isspace())
 
 
 def _page_img_ratio(page):
@@ -429,6 +455,7 @@ def main():
         "links_inlined": 0, "links_footnote": 0, "stripped_lines": 0,
         "orphan_merged": 0, "orphan_dropped": 0, "headings": 0, "body_height": 0.0,
         "tables_rebuilt": 0, "char_rebuilt_pages": 0,
+        "char_rebuild_rejected_pages": 0,
     }
     pages_meta = []
     raw_pages = []  # [(no, page, tp, lines)]
@@ -442,9 +469,18 @@ def main():
         # v0.6.13 逐字符文字层兜底: 平均 <1.5 字符/行框(字符级定位) → 坐标重建阅读行
         if lines and _page_avg_chars_per_box(lines) < 1.5 and tp is not None:
             rebuilt = _char_rebuild_lines(tp)
-            if rebuilt and sum(len(t) for _, _, t in rebuilt) >= sum(len(t) for _, _, t in lines):
-                lines = rebuilt
-                notes["char_rebuilt_pages"] = notes.get("char_rebuilt_pages", 0) + 1
+            # v0.7.2 W1-1: 采纳基线改用"页面真实非空白字符数",替代
+            # sum(len(t) for _,_,t in lines)——后者对逐字符页会因 rect 重叠而虚高约 10%,
+            # 把正确的行重建误判为"内容变少"(实证 p3: orig=685 > 页面真实 625)从而拒绝;
+            # 被拒页回退到同样重叠的 rect 路径,产出逐字符/交错乱码(如 `E圣`/`RE招IMAG标ININ概G`)。
+            if rebuilt:
+                true_chars = _page_true_chars(tp)
+                rebuilt_chars = sum(len(t) for _, _, t in rebuilt)
+                if true_chars <= 0 or rebuilt_chars >= CHAR_REBUILD_MIN_RATIO * true_chars:
+                    lines = rebuilt
+                    notes["char_rebuilt_pages"] = notes.get("char_rebuilt_pages", 0) + 1
+                else:
+                    notes["char_rebuild_rejected_pages"] = notes.get("char_rebuild_rejected_pages", 0) + 1
         page_h = 0.0
         try:
             page_h = float(page.get_size()[1])
