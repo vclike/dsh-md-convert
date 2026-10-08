@@ -62,6 +62,73 @@ def _area(c):
     return max(0.0, (c[2] - c[0]) * (c[3] - c[1]))
 
 
+def cells_to_grid(cells, texts, nrows, ncols):
+    """单元格几何 → 行×列网格(v0.7.2 W-表格列序)。
+
+    **为什么不能用"按检测顺序每 ncols 个切一段"**(旧主路径的做法):
+    cell 检测器只按 (y1, x1) 大致排序,而同一视觉行的 cell 顶边 y1 常相差 0.1~0.2px
+    —— 排序会把这些 cell 打乱,再按 ncols 盲目切片就逐行错位。
+    实测(采购文件 97p 扫描件 p4,线条表):48 个 cell 恰好 = 16 行 × 3 列,于是走主路径,
+    16 行里 **11 行的条款号跑到了第 2/3 列**(如 `服务要求 | 1.3.2 | …`、`3.2.4 | 金额 | 最高限价`)。
+    同一文件里**正确的几何装配法本来就在**(旧的 count 不符回退分支),只是主路径没用它。
+
+    行边界 **不猜容差**:结构模型已判定有 nrows 行,就取 cy(垂直中心)序列中**最大的
+    nrows-1 个间隙**当行边界 —— 零参数,且不受单元格高度差异影响
+    (曾用"0.5×中位单元格高"当容差:被 h=229 的高单元格放大到 ~50px,把相距 34px 的两行误并)。
+
+    合并单元格/漏检导致某行 cell 数偏少时,按**列槽中心**就近落格(留空而不顶替)。
+    """
+    items = []
+    for b, txt in zip(cells, texts):
+        c = b["coordinate"] if isinstance(b, dict) else b
+        items.append({"cx": (float(c[0]) + float(c[2])) / 2.0,
+                      "cy": (float(c[1]) + float(c[3])) / 2.0,
+                      "txt": txt if txt is not None else ""})
+    if not items:
+        return []
+
+    items.sort(key=lambda it: it["cy"])
+    if nrows >= 2 and len(items) >= nrows:
+        gaps = [(items[k + 1]["cy"] - items[k]["cy"], k) for k in range(len(items) - 1)]
+        cuts = sorted(k for _g, k in sorted(gaps, reverse=True)[:nrows - 1])
+        rows, start = [], 0
+        for cut in cuts:
+            rows.append(items[start:cut + 1])
+            start = cut + 1
+        rows.append(items[start:])
+    else:
+        rows = [items]
+    for r in rows:
+        r.sort(key=lambda it: it["cx"])
+
+    width = max(len(r) for r in rows)
+    if width <= 1:
+        return [[it["txt"]] for r in rows for it in r]
+
+    # 列槽中心:仅用"cell 数 == width"的满行估计(避免被少格行拉偏)
+    full = [r for r in rows if len(r) == width]
+    grid = []
+    if not full:
+        return [[it["txt"] for it in r] for r in rows]
+    slot_cx = []
+    for ci in range(width):
+        xs = sorted(r[ci]["cx"] for r in full)
+        slot_cx.append(xs[len(xs) // 2])
+    for r in rows:
+        if len(r) == width:
+            grid.append([it["txt"] for it in r])
+            continue
+        row = [""] * width
+        for it in r:  # 就近落槽;冲突则顺延到下一个空槽
+            j = min(range(width), key=lambda k: abs(slot_cx[k] - it["cx"]))
+            while j < width and row[j]:
+                j += 1
+            if j < width:
+                row[j] = it["txt"]
+        grid.append(row)
+    return grid
+
+
 def _fully_inside(inner, outer):
     return inner[0] >= outer[0] and inner[1] >= outer[1] and inner[2] <= outer[2] and inner[3] <= outer[3]
 
@@ -233,25 +300,14 @@ class RoutingOCR:
                     cell_texts[i].append(str(line).strip())
                     break
         texts = [" ".join(t) for t in cell_texts]
-        if len(texts) == nrows * ncols:
-            grid = [texts[i * ncols:(i + 1) * ncols] for i in range(nrows)]
-        else:
-            items = []
-            for b, txt in zip(cells, texts):
-                c = b["coordinate"]
-                items.append(((c[1] + c[3]) / 2, (c[0] + c[2]) / 2, txt))
-            items.sort(key=lambda x: x[0])
-            rows = [[items[0]]] if items else []
-            for i in range(1, len(items)):
-                if items[i][0] - items[i - 1][0] > 15:
-                    rows.append([])
-                rows[-1].append(items[i])
-            grid = []
-            for r in rows:
-                r.sort(key=lambda x: x[1])
-                grid.append([it[2] for it in r])
-        lines = ["| " + " | ".join(row) + " |" for row in grid]
-        sep = "| " + " | ".join(["---"] * len(grid[0])) + " |"
+        # v0.7.2 W-表格列序: 统一走几何装配 —— 旧主路径"按检测顺序每 ncols 个切一段"
+        # 会被同视觉行 y1 的 0.1~0.2px 差异打乱(实测 p4 16 行里 11 行列序错)。
+        grid = cells_to_grid(cells, texts, nrows, ncols)
+        if not grid:
+            return "[表格:未检出单元格]"
+        width = max(len(r) for r in grid)
+        lines = ["| " + " | ".join(list(r) + [""] * (width - len(r))) + " |" for r in grid]
+        sep = "| " + " | ".join(["---"] * width) + " |"
         return "\n".join([lines[0], sep] + lines[1:])
 
     def textbox_to_md(self, crop, depth=0):
@@ -304,7 +360,22 @@ class RoutingOCR:
         return parts
 
 
+def _utf8_stdio():
+    """Windows 管道默认 GBK,JSON 输出强制 UTF-8。
+
+    v0.7.2:本文件此前**缺**这一步(extract_text / parallel_ocr / render_pages 都有)——
+    CLI 在 GBK 控制台下打印中文 JSON 会 UnicodeEncodeError 崩溃,
+    而被父进程以 UTF-8 读取时又会得到乱码。
+    """
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main():
+    _utf8_stdio()
     src = sys.argv[1]
     scale = 2.0
     args = sys.argv[2:]
