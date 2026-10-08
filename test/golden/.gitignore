@@ -1,0 +1,2 @@
+# golden 基线的产物目录(每次 --write/--check 重新生成,不入库)
+.out/
