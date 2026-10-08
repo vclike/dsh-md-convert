@@ -132,6 +132,9 @@ dsh-md-convert c2.pdf -o ./md --no-cjk-merge
 # v0.7.2: use the self-built geometric table rebuilder instead of PyMuPDF find_tables (A/B and rollback)
 python lib/py/extract_text.py c2.pdf --legacy-tables
 
+# v0.7.3: emit a single JSON object on stdout for scripts (human lines/progress on stderr; no md body, just mdChars)
+dsh-md-convert report.pdf -o ./md --json | jq '.results[0] | {ok, chain, outFile, mdChars}'
+
 # Check / install OCR deps and models
 dsh-md-convert check        # status only, no install
 dsh-md-convert deps         # install missing deps and pre-download OCR models (one network run; offline afterwards)

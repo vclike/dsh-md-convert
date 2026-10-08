@@ -205,6 +205,9 @@ python lib/py/extract_text.py c2.pdf --legacy-tables
 
 # v0.7.3:只转换指定页(1 起页号;文字层支持任意集合,扫描件只支持 1-N 前缀)
 dsh-md-convert 采购文件.pdf -o ./md --pages "1-20,25"
+
+# v0.7.3:结果以单个 JSON 输出到 stdout(人类可读行/进度走 stderr;不含 md 正文,只给 mdChars)
+dsh-md-convert 采购文件.pdf -o ./md --json | jq '.results[0] | {ok, chain, outFile, mdChars}'
 ```
 
 完整选项见 `dsh-md-convert --help`。

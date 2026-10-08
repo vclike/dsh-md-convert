@@ -159,6 +159,13 @@
     `--pages 2-3` → 锚点 `[1,2,3]` **且告警"未生效"**(不静默);`--pages 9` → exit=1 报"超出文档页数"。
   - 实现中被抓出的两个自身错误:① `pdfPageCount` 是 **async 且两参**(漏 await/漏参都得到 0,
     导致误报 E_OCR_DEPS);② 对 `const o` 整体重新赋值 → `E_UNKNOWN: Assignment to constant variable`。
+- **CLI `--json`**(W4-9):结果以**单个 JSON 对象**输出到 stdout,便于脚本/CI/jq 消费
+  (`{ok,total,succeeded,failed,jobId?,results:[{ok,file,code,error,outFile,chain,mode,planPath,statePath,progressPath,etaSec,quality,decision,batches,warnings,mdChars}]}`)。
+  - **stdout 保证纯 JSON**:vision/依赖等模块会**直接 `console.log`**(如 "vision: 已渲染…"),
+    逐个改不现实 → 转换期间把 `console.log` 整体改道 stderr,只把最终 JSON 用原始通道输出。
+    实测:① 成功路径 stdout 可被 JSON 解析、人类行在 stderr;② 失败路径仍是纯 JSON 且带 `code`、退出码 1。
+  - **不外泄 md 正文**(可能数 MB):只给 `mdChars`。
+  - 不带 `--json` 时行为完全不变(人类可读行仍在 stdout)。
 
 ### Changed(变更)
 
