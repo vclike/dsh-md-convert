@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, parseAnchoredPages, parseNdjsonLine, stateKeyFor } from "../lib/core/jobs.js";
+import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, mergeCrossPageTables, parseAnchoredPages, parseNdjsonLine, stateKeyFor } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
 
 function tmpDir(tag) {
@@ -358,6 +358,61 @@ test("createOcrRun(W3-2): 键匹配 + md 有锚点页 → 默认复用(不重 OC
 	assert.ok(readFileSync(mdPath, "utf8").includes("已完成页内容"), "复用必须保留已完成页");
 	assert.ok(existsSync(statePath), "键匹配的 state 不得被删除");
 	assert.ok((seenArgs ?? []).includes("--state-key"), "键匹配时必须把键传给 Python");
+});
+
+test("W-跨页续接: 片段首行是数据行 → 并回上一页表(保留该行, 丢弃片段分隔线)", () => {
+	// 真实形态(采购文件 p4→p5):上一页表尾 + 下一页片段(首行是被提升成表头的**数据行**)
+	const md = [
+		"<!--PAGE:04-->", "", "| 条款号 | 条款名称 | 编列内容 |", "| --- | --- | --- |",
+		"| 3.3.1 | 申请文件有效期 | 自申请文件递交截止之日起90天 |",
+		"| 3.4.1 | 投标保证金 | 不收取 |", "", "<!--/PAGE:04-->", "",
+		"<!--PAGE:05-->", "", "| 备注：如需缴纳投标保证金,可选择下列两种形式之一提交 |  |  |",
+		"| --- | --- | --- |", "| 不适用 | 投标保证金的退还 | 3.4.3 |", "", "<!--/PAGE:05-->",
+	].join("\n");
+	const out = mergeCrossPageTables(md);
+	assert.equal(out.split("| --- | --- | --- |").length - 1, 1, "只应剩一个分隔行(一张表)");
+	assert.ok(out.includes("| 备注：如需缴纳投标保证金"), "被提升的数据行必须保留, 不能丢");
+	assert.ok(out.includes("| 不适用 | 投标保证金的退还 | 3.4.3 |"), "片段数据行保留");
+	assert.ok(out.includes("| 3.4.1 | 投标保证金 | 不收取 |"), "上一页表尾保留");
+	// 锚点语义不被破坏
+	for (const a of ["<!--PAGE:04-->", "<!--/PAGE:04-->", "<!--PAGE:05-->", "<!--/PAGE:05-->"]) {
+		assert.ok(out.includes(a), `锚点 ${a} 必须保留`);
+	}
+	// 顺序: 上一页表头 → 它的行 → 续接行 → 上一页闭合锚点
+	assert.ok(out.indexOf("| 3.4.1 |") < out.indexOf("| 备注："), "续接行应在上一页表之后");
+	assert.ok(out.indexOf("| 备注：") < out.indexOf("<!--/PAGE:04-->"), "续接行应并入上一页块内(闭合锚点之前)");
+	assert.equal(mergeCrossPageTables(out), out, "幂等:再并一次结果不变");
+});
+
+test("W-跨页续接: 片段重复表头 → 丢弃重复表头(不出现两个表头)", () => {
+	const md = [
+		"<!--PAGE:01-->", "", "| A | B |", "| --- | --- |", "| a1 | b1 |", "", "<!--/PAGE:01-->", "",
+		"<!--PAGE:02-->", "", "| A | B |", "| --- | --- |", "| a2 | b2 |", "", "<!--/PAGE:02-->",
+	].join("\n");
+	const out = mergeCrossPageTables(md);
+	assert.equal((out.match(/\| A \| B \|/g) ?? []).length, 1, "重复表头只能出现一次");
+	assert.equal(out.split("| --- | --- |").length - 1, 1);
+	assert.ok(out.includes("| a1 | b1 |") && out.includes("| a2 | b2 |"), "两页数据行都保留");
+});
+
+test("W-跨页续接: 不该并的情形不并(列数不同/中间有正文/夹在非锚点内容后)", () => {
+	const base = (p1, p2, mid = ["", "<!--/PAGE:01-->", "", "<!--PAGE:02-->", ""]) =>
+		[["<!--PAGE:01-->", "", ...p1].join("\n"), mid.join("\n"), [...p2, "", "<!--/PAGE:02-->"].join("\n")].join("\n");
+	const t2 = ["| A | B |", "| --- | --- |", "| a | b |"];
+	const t3 = ["| A | B | C |", "| --- | --- | --- |", "| a | b | c |"];
+	// 列数不同 → 两张表各自保留(2 列分隔行 1 个、3 列分隔行 1 个)
+	const widthMismatch = mergeCrossPageTables(base(t2, t3));
+	assert.equal(widthMismatch.split("\n").filter((l) => l.trim() === "| --- | --- |").length, 1);
+	assert.equal(widthMismatch.split("\n").filter((l) => l.trim() === "| --- | --- | --- |").length, 1);
+	// 中间夹正文 → 不并(两个同形分隔行)
+	const withHeading = base(t2, t2, ["", "## 小节标题", "", "<!--/PAGE:01-->", "", "<!--PAGE:02-->", ""]);
+	assert.equal(withHeading.split("| --- | --- |").length - 1, 2, "中间有正文时不得合并");
+	// 表头/分隔行不全 → 不并
+	const noSep = base(["| A | B |", "| a | b |"], t2);
+	assert.equal(noSep.split("| --- | --- |").length - 1, 1, "上一页无分隔行时不并");
+	// 无表格 → 原文返回
+	const plain = "<!--PAGE:01-->\n\n纯文本\n\n<!--/PAGE:01-->";
+	assert.equal(mergeCrossPageTables(plain), plain);
 });
 
 test("createOcrRun: 超时 → E_OCR_TIMEOUT(无 signal 场景)", async () => {
