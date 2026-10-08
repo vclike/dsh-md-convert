@@ -51,6 +51,29 @@ def main():
               [(802.0, 724.0, "| a | b |\n| --- | --- |")]],
              [842.0, 842.0, 842.0]), 0),
     ]
+    # v0.7.9 P3/W1-3: 表格重建的字符丢弃计数必须**可达**(否则就是永不触发的死传感器)。
+    # 用假 _table_chars 构造"字符落在网格外"的场景:1 个 y 在 band 外、1 个 x 在列外。
+    import table_rebuild as tr  # noqa: E402
+
+    tr.reset_stats()
+    _orig_chars = tr._table_chars
+    try:
+        tr._table_chars = lambda tp, rect: [
+            (50, 500, "A", 0, 60, 0, 12),  # y 在 band 外 → 丢弃
+            (50, 150, "B", 0, 60, 0, 12),  # 网格内 → 保留
+            (500, 150, "C", 0, 60, 0, 12),  # x 在列外 → 丢弃
+        ]
+        md = tr.rebuild_table_md(None, {"rows": [100.0, 200.0], "cols": [0.0, 100.0],
+                                       "rect": (0.0, 100.0, 100.0, 200.0)})
+        st = tr.stats()
+    finally:
+        tr._table_chars = _orig_chars
+        tr.reset_stats()
+    checks += [
+        ("表格重建: 网格外字符被计入 chars_dropped", st.get("chars_dropped"), 2),
+        ("表格重建: 网格内字符仍正常输出", "| B |" in md, True),
+        ("表格重建: reset_stats 能清零", (tr.reset_stats(), tr.stats()["chars_dropped"])[1], 0),
+    ]
     ok = True
     for name, got, want in checks:
         good = got == want

@@ -167,6 +167,21 @@ def _join_chars(chars):
     return " ".join(p for p in parts if p).replace("|", "\\|").strip()
 
 
+# v0.7.9 P3/W1-3:重建过程中的字符丢弃观测计数(只观测,不改行为)。
+# 由 reset_stats() / stats() 供调用方读取并写进 notes。
+_STATS = {"chars_dropped": 0}
+
+
+def reset_stats():
+    """重置计数(每次转换开始时调用,避免跨次累加)。"""
+    _STATS["chars_dropped"] = 0
+
+
+def stats():
+    """返回当前累计的重建统计(供 notes/告警使用)。"""
+    return dict(_STATS)
+
+
 def rebuild_table_md(tp, table):
     """网格 → markdown 表格文本(首行=表头,次行 |---| 分隔)。
 
@@ -183,6 +198,10 @@ def rebuild_table_md(tp, table):
                 ri = bi
                 break
         if ri is None:
+            # v0.7.9 P3/W1-3: 字符落在检测到的 band 之外 → **静默丢弃**。
+            # 这里只计数不改变行为(改归属策略是 W1-3 的另一半,风险更高,单独立项);
+            # 有了计数才能判断"丢弃是否真的构成质量问题",而不是靠猜。
+            _STATS["chars_dropped"] += 1
             continue
         ci = None
         for cj in range(len(xs) - 1):
@@ -190,6 +209,7 @@ def rebuild_table_md(tp, table):
                 ci = cj
                 break
         if ci is None:
+            _STATS["chars_dropped"] += 1
             continue
         grid[ri][ci].append((cx, cy, ch, cl, cr, cb, ct))
 

@@ -654,6 +654,15 @@ def main():
                     rb = table_rebuild.rebuild_tables(page, tp)
                 except Exception:
                     rb = []
+                # v0.7.9 P3/W1-3: 重建时落在 band/列之外的字符是**静默丢弃**的。
+                # 只观测不改行为 —— 有计数才能判断它是否构成质量问题。
+                try:
+                    d = table_rebuild.stats().get("chars_dropped", 0)
+                    if d:
+                        notes["table_chars_dropped"] = notes.get("table_chars_dropped", 0) + d
+                        table_rebuild.reset_stats()
+                except Exception:
+                    pass
             if args.legacy_tables or not ft:
                 tables = rb
             elif rb and ft_max > table_extract.SUSPECT_CELL_LEN:
@@ -685,6 +694,11 @@ def main():
             notes["strip_protected_pages"] = notes.get("strip_protected_pages", 0) + 1
         else:
             notes["stripped_lines"] += strip_dropped_here
+            # v0.7.9 P3/W1-5: 记录**单页**剥离峰值 —— 整册总数看不出"某一页被剥掉大半"。
+            # 页眉页脚误判的特征就是单页剥离量异常高(实证 c1 整册 378 行 ≈ 34 行/页)。
+            if strip_dropped_here > notes.get("stripped_lines_max_page", 0):
+                notes["stripped_lines_max_page"] = strip_dropped_here
+                notes["stripped_lines_max_page_no"] = i + 1
         kept, merged, dropped = _merge_orphans(kept)
         notes["orphan_merged"] += merged
         notes["orphan_dropped"] += dropped
