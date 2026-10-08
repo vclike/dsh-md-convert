@@ -139,12 +139,22 @@ class RoutingOCR:
 
         self.TableStructureRecognition = TableStructureRecognition
         self.TableCellsDetection = TableCellsDetection
+        self.FormulaRecognition = FormulaRecognition
         self.layout = LayoutDetection(model_name="PP-DocLayout-L", threshold=LAYOUT_THRESHOLD)
         self.table_cls = TableClassification(model_name="PP-LCNet_x1_0_table_cls")
         self.structs = {}    # wired/wireless → TableStructureRecognition
         self.celldets = {}   # wired/wireless → TableCellsDetection
-        self.formula = FormulaRecognition(model_name="PP-FormulaNet_plus-S")
+        # v0.7.2 W3-5: 公式模型改为懒加载 —— PP-FormulaNet_plus-S 约 251MB,
+        # 无公式文档(绝大多数)不必加载;此前是 __init__ 急加载,与本类自称的
+        # "懒加载各子模型"不符(表格结构/单元格早已懒加载)。
+        self.formula = None
         self.rapid = RapidOCR()
+
+    def formula_engine(self):
+        """公式模型按需加载(v0.7.2 W3-5),首次使用时构建并在本实例内复用。"""
+        if self.formula is None:
+            self.formula = self.FormulaRecognition(model_name="PP-FormulaNet_plus-S")
+        return self.formula
 
     # ---------- 路由 ----------
     def ocr_text_region(self, crop, region_box, offset_x, offset_y):
@@ -284,7 +294,7 @@ class RoutingOCR:
                     parts.append("[表格识别失败: %s]" % str(e)[:80])
             elif label in ("formula", "formula_title"):
                 try:
-                    fres = self.formula.predict(np.array(crop))
+                    fres = self.formula_engine().predict(np.array(crop))
                     latex = fres[0]["rec_formula"]
                     parts.append("$$ %s $$" % latex)
                 except Exception as e:
