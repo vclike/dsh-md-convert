@@ -12,10 +12,19 @@ Convert Office documents and PDFs (including scanned ones) to Markdown with **st
 | Input | Pipeline | Notes |
 | --- | --- | --- |
 | `.docx` / `.xlsx` / `.pptx` | MarkItDown direct | Headings/lists/tables/paragraphs kept as Markdown |
-| `.pdf` (with text layer) | MarkItDown direct | Enters the **three-tier scanned routing** automatically when the text layer is empty |
-| `.pdf` (scanned) | **Three-tier engine routing** (v0.6.0): ① complexity probe samples 3 pages → ② table/formula ratio over threshold → vision briefs, otherwise ③ **page-parallel local OCR** (NDJSON streaming + resume, any page count) | Headings/body/tables/formulas/stamps, CPU-only, lightweight models; long documents no longer bound to a single synchronous call |
+| `.pdf` (with text layer) | **PyMuPDF4LLM merged-paragraph extraction** (primary) → self-built pypdfium2 structural chain compared by quality score | Both candidates are **CJK-space-merged before scoring**; tables use PyMuPDF `find_tables()` (clean cells, fake tables filtered) and `--legacy-tables` restores the geometric rebuilder |
+| `.pdf` (scanned) | **Three-tier engine routing** (v0.6.0): ① complexity probe samples 3 pages → ② table/formula ratio over threshold → vision briefs, otherwise ③ **page-parallel local OCR** (NDJSON streaming + resume, any page count) | Headings/body/tables/formulas/stamps, CPU-only, lightweight models; repeat conversions of the same file reuse the checkpoint and the probe result (key = plugin version + render scale + document fingerprint) |
 | `.doc` / `.xls` / `.ppt` | WPS/Office COM (Windows) or LibreOffice (other platforms) re-save to modern format → MarkItDown | Backend auto-detected, configurable |
-| `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / direct read | Everything MarkItDown supports |
+| `.png` / `.jpg` / `.jpeg` / `.tif` / `.tiff` | **Local RapidOCR first** (v0.7.2) | Models ship inside the package → fully offline, zero CDN, writes nothing to the working directory; falls back to MarkItDown/tesseract (first run needs the CDN) with the reason in `warnings` |
+| `.html` / `.csv` / `.json` / `.xml` / `.rss` / `.atom` / `.ipynb` / `.srt` / `.vtt` / `.zip` | MarkItDown | Everything MarkItDown supports. `.zip` **recursively converts every entry** (bounded by the bridge timeout) |
+| `.md` / `.markdown` / `.txt` | Direct read with **encoding detection** (v0.7.2) | UTF-8 / UTF-16 BOM → strict UTF-8 → **GB18030 fallback**; non-UTF-8 is surfaced in `warnings` (a BOM is valid UTF-8: stripped, not warned) |
+
+> **Not supported**: `.gif` / `.bmp` / `.webp` — the engine has no backend for them (they used to be
+> allowlisted, which surfaced a misleading `Unable to detect document format`); they now return
+> `E_UNSUPPORTED_FORMAT` with a hint to convert the file first.
+
+> **Encrypted PDFs**: files needing a **user password** return `E_ENCRYPTED` (no password channel yet);
+> owner-password (permissions-only) files convert normally.
 
 > **"Structural formatting"** = heading levels (H1–H6), lists, tables (pipe tables), paragraph order are preserved.
 > Markdown cannot express visual details (fonts/sizes/colors/indentation); no converter preserves them — that is inherent to the format.
@@ -113,6 +122,16 @@ dsh-md-convert assemble "md/scan.vision/plan.json" [--review]
 # Pin a Python interpreter (multi-Python setups)
 dsh-md-convert scan.pdf -o ./md --ocr-python "C:\path\to\python.exe"
 
+# v0.7.2: directory input (expands to the supported files inside; every skipped file states why)
+dsh-md-convert ./assets -o ./md
+dsh-md-convert ./assets -o ./md -r     # -r/--recursive recurses into subdirectories
+
+# v0.7.2: disable CJK inter-character space merging (on by default)
+dsh-md-convert c2.pdf -o ./md --no-cjk-merge
+
+# v0.7.2: use the self-built geometric table rebuilder instead of PyMuPDF find_tables (A/B and rollback)
+python lib/py/extract_text.py c2.pdf --legacy-tables
+
 # Check / install OCR deps and models
 dsh-md-convert check        # status only, no install
 dsh-md-convert deps         # install missing deps and pre-download OCR models (one network run; offline afterwards)
@@ -128,7 +147,8 @@ Every failure carries a **stable error code** so callers (CLI / agent tool / SDK
 | --- | --- | --- |
 | `E_FILE_NOT_FOUND` | Source file missing | Check the path |
 | `E_UNSUPPORTED_FORMAT` | Extension not supported | Use another format |
-| `E_MARKITDOWN` | MarkItDown conversion failed | Usually corrupt/encrypted file; retry once |
+| `E_MARKITDOWN` | MarkItDown conversion failed | Usually a corrupt file or a format the engine has no backend for; retry once |
+| `E_ENCRYPTED` | PDF is encrypted and needs a **user password** (v0.7.2) | Ask the user to remove the protection; retrying will not help (owner-password files are unaffected) |
 | `E_LEGACY_CONVERT` | Legacy re-save failed (COM/LibreOffice) | WPS/Office on Windows, LibreOffice elsewhere; built-in retry on busy |
 | `E_OCR_DEPS` | OCR deps missing (install failed/disabled) | Run `dsh-md-convert deps` |
 | `E_OCR_RUN` | OCR execution failed (process-level/fatal) | Finished pages kept in `.state.json`; resume with `--resume` |
@@ -193,6 +213,7 @@ Plugin config (`cordis.patch.yml`, validated by Schemastery, no hardcoding):
         forceOcr: false         # force OCR for PDFs
         ocrScale: 2             # PDF render scale
         autoInstallDeps: true   # auto pip-install missing OCR deps
+        cjkMerge: true          # v0.7.2: merge CJK inter-character spaces (pure rules, zero new deps)
         background: "auto"      # background jobs for OCR-class tasks: auto | true | false
         engine: "auto"          # scanned-PDF engine routing: auto | local | vision
         ocr:
@@ -268,7 +289,10 @@ node lib/cli.js convert test/fixtures/sample3.pdf -o .tmp/smoke --force-ocr --ba
 
 ## Limitations
 
-- Corrupt/encrypted files and some complex layouts may fail (with a clear error)
+- **Encrypted PDFs** (user password) return `E_ENCRYPTED`; owner-password/permissions-only files convert
+  normally. Corrupt files also carry explicit error codes.
+- Images use **local RapidOCR** (offline); when the OCR deps are missing they fall back to
+  MarkItDown/tesseract (**first run needs the network** and writes traineddata into the working directory)
 - Formats MarkItDown does not support (e.g. `.pages/.key`) are reported explicitly as unsupported
 - **Speed-first trade-offs**: routing OCR uses lightweight models (layout PP-DocLayout-L, text RapidOCR, formula FormulaNet-S); quality is reasonably guaranteed, but complex tables (multi-level merges / slanted headers), complex multi-column layouts, and very small fonts may be incomplete
 - OCR models need a one-time network download (a few hundred MB to `~/.paddlex/`); afterwards fully offline, fast loads

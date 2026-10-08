@@ -7,18 +7,26 @@
 - **AI Agent 使用规范**:[README.agent.md](README.agent.md)(错误码处理/批量规范/调用约定)
 - English: [README.en.md](README.en.md)
 
-## 支持格式与转换链路(v0.7.0)
+## 支持格式与转换链路(v0.7.2)
 
 | 输入 | 链路 | 说明 |
 | --- | --- | --- |
 | `.docx` / `.xlsx` / `.pptx` | **MarkItDown 子进程桥**(主引擎) | XML 结构无损映射:标题/列表/表格/段落原生保留 |
-| `.pdf`(含文字层) | **PyMuPDF4LLM 段落合并直提**(主引擎,v0.6.14+)→ 质量信号触发时自研 **pypdfium2 结构增强链**二次对比(表格重建/标题层级/链接保留/页眉页脚剥离/PAGE 锚点/逐页图像占比);**逐字符定位文字层**(Word 导出常见)自动切换字符坐标重建 | 产物附 `quality` 质量信号(score/issues/suggestVision),碎片化自动换引擎并透出 `[质量修复]` 警告 |
-| `.pdf`(扫描件/纯图) | **三层引擎路由**(v0.6.0):① 复杂度探针抽样 3 页 → ② 表格/公式占比超阈值走 vision 任务书,否则 ③ **页级并行本地 OCR**(NDJSON 流式 + 断点续跑,任意页数) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型 |
+| `.pdf`(含文字层) | **PyMuPDF4LLM 段落合并直提**(主引擎,v0.6.14+)→ 质量信号触发时自研 **pypdfium2 结构增强链**二次对比(表格重建/标题层级/链接保留/页眉页脚剥离/PAGE 锚点/逐页图像占比);**逐字符定位文字层**(Word 导出常见)自动切换字符坐标重建 | 产物附 `quality` 质量信号(score/issues/suggestVision,含中文行间空格注入率)。**两个候选都先做中文归并再比优**;表格默认用 PyMuPDF `find_tables()`(单元格干净 + 假表过滤),`--legacy-tables` 可回到自研几何法 |
+| `.pdf`(扫描件/纯图) | **三层引擎路由**(v0.6.0):① 复杂度探针抽样 3 页 → ② 表格/公式占比超阈值走 vision 任务书,否则 ③ **页级并行本地 OCR**(NDJSON 流式 + 断点续跑,任意页数) | 标题/正文/表格/公式/印章,纯 CPU、轻量模型。**同文档重复转换默认按键复用断点**(插件版本 + 渲染倍率 + 文档指纹),探针结论亦缓存 |
 | `.doc` / `.xls` / `.ppt` | WPS/Office COM(Windows)或 LibreOffice(其余平台)另存为新格式 → MarkItDown | 后端自动探测,可配置 |
-| `.html/.csv/.json/.xml/.ipynb/.md/.txt/...` | MarkItDown / 直接读取 | MarkItDown 支持的全部格式 |
+| `.png` / `.jpg` / `.jpeg` / `.tif` / `.tiff` | **本地 RapidOCR 优先**(v0.7.2) | 模型随包内置 → **完全离线、零 CDN、不写工作目录**;失败或无文本时回落 MarkItDown(tesseract.js)并在 warnings 说明原因 |
+| `.html` / `.csv` / `.json` / `.xml` / `.rss` / `.atom` / `.ipynb` / `.srt` / `.vtt` / `.zip` | MarkItDown | MarkItDown 支持的全部格式。`.zip` 会**递归转换**包内每个文件(由子进程桥超时兜底) |
+| `.md` / `.markdown` / `.txt` | 直接读取(带**编码探测**,v0.7.2) | UTF-8 / UTF-16 BOM → 严格 UTF-8 → **GB18030 回落**;非 UTF-8 在 warnings 透出 `[编码]`(BOM 属合法 UTF-8,只剥不告警) |
 
 > **引擎显式指定**:`engine:"pymupdf4llm"` 强制段落合并直提(跳过自研直提优先级);
 > `engine:"local"/"vision"` 强制扫描件路由;默认 `engine:"auto"` 全自动调度。
+
+> **不支持**:`.gif` / `.bmp` / `.webp` —— 解析引擎没有对应后端(此前被白名单误放行,用户会看到
+> 误导性的 `Unable to detect document format`;现在直接返回 `E_UNSUPPORTED_FORMAT` 并提示先转格式)。
+
+> **加密 PDF**:需要**用户密码**的文件返回 `E_ENCRYPTED`(暂不提供密码通道);仅 owner 密码
+> (权限加密)的文件可正常转换。
 
 > **"结构级排版"** = 标题层级(H1–H6)、列表、表格(管道表格)、段落顺序均保留。
 > Markdown 本身无法表达字体/字号/颜色/缩进等视觉细节,任何转换器都不会保留它们——这是格式本质。
@@ -32,7 +40,7 @@
 | **必需** | Node.js ≥ 18 | 手动 | 插件不运行 |
 | **必需**(PDF 路由) | Python 3.10+ | 手动(`python`/`py`/`python3` 自动探测) | PDF 无法转换 |
 | **推荐**(PDF 文字层主链) | `pip install pymupdf4llm pypdfium2` | **首次转换自动安装并重试**;也可手动 | 自动降级:文字层主链不可用 → markitdown 兜底(质量下降),warnings 附修复命令 |
-| **按需**(扫描件/纯图) | OCR 全家桶:`paddlepaddle` `paddleocr` `paddlex[ocr]` `rapidocr` `onnxruntime` + 模型(数百 MB) | **首次转换自动检测+默认自动安装**(`dsh-md-convert deps` 可手动) | 扫描件路由不可用 → 建议 `engine:"vision"` |
+| **按需**(扫描件/图片) | OCR 全家桶:`paddlepaddle` `paddleocr` `paddlex[ocr]` `rapidocr` `onnxruntime` + 模型(数百 MB) | **首次转换自动检测+默认自动安装**(`dsh-md-convert deps` 可手动) | 扫描件路由不可用 → 建议 `engine:"vision"`;图片回落 MarkItDown/tesseract(首次需联网下 traineddata) |
 | **按需**(老格式 `.doc/.xls/.ppt`) | Windows: WPS Office 或 Microsoft Office;Linux/macOS: LibreOffice | 手动 | 老格式不可转换 |
 
 ### 扫描件 OCR 模型说明
@@ -184,6 +192,16 @@ dsh-md-convert scan.pdf -o ./md --ocr-python "C:\path\to\python.exe"
 # 检查 / 安装 OCR 依赖与模型
 dsh-md-convert check        # 只检查状态,不安装
 dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地(需联网一次,之后离线可用)
+
+# v0.7.2:目录输入(展开为其中受支持文件批量转换;跳过的文件逐条打印原因)
+dsh-md-convert ./素材 -o ./md
+dsh-md-convert ./素材 -o ./md -r     # -r/--recursive 递归子目录
+
+# v0.7.2:关闭中文行间空格归并(默认开启)
+dsh-md-convert c2.pdf -o ./md --no-cjk-merge
+
+# v0.7.2:表格回到自研几何重建法(默认用 PyMuPDF find_tables,A/B 与回退用)
+python lib/py/extract_text.py c2.pdf --legacy-tables
 ```
 
 完整选项见 `dsh-md-convert --help`。
@@ -196,7 +214,8 @@ dsh-md-convert deps         # 安装缺失依赖并预下载 OCR 模型到本地
 | --- | --- | --- |
 | `E_FILE_NOT_FOUND` | 源文件不存在 | 检查路径 |
 | `E_UNSUPPORTED_FORMAT` | 扩展名不受支持 | 更换格式 |
-| `E_MARKITDOWN` | MarkItDown 转换失败 | 多为文件损坏/加密,可重试 |
+| `E_MARKITDOWN` | MarkItDown 转换失败 | 多为文件损坏或引擎无对应后端;可重试 |
+| `E_ENCRYPTED` | PDF 已加密(需要**用户密码**,v0.7.2) | 用密码解除保护后重试(插件暂不提供密码通道;仅 owner 密码的文件不受影响) |
 | `E_LEGACY_CONVERT` | 老格式另存失败(COM/LibreOffice) | Windows 需 WPS/Office、其余平台需 LibreOffice;已内置自动重试 |
 | `E_OCR_DEPS` | 缺 OCR 依赖(自动安装失败/已禁用) | 执行 `dsh-md-convert deps` |
 | `E_OCR_RUN` | OCR 执行失败(进程级/致命错误) | 已完成页保留于 `.state.json`,可 `--resume` 接续 |
@@ -244,6 +263,21 @@ md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision �
 | `background` | `auto`(默认)/`true`/`false` | OCR 类长任务后台作业化;**缺后台控制器时自动降级前台并附 warning,不失败**;文本层直提等快链路始终同步 |
 | `engine` | `auto`(默认)/`local`/`vision` | 扫描件引擎;auto=复杂度探针换轨(表格/公式占比>阈值→vision) |
 | `resume` | boolean | 断点续跑:接续 `.state.json` 已完成页,仅重试失败页 |
+
+**插件配置**(`cordis.patch.yml` / DSH 配置面板;工具参数可逐次覆盖同名项):
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `cjkMerge` | `true` | **v0.7.2**:中文行间空格归并(纯规则、零新增依赖、幂等)。置 `false` 关闭 —— 仅在需要与旧产物逐字节对比时使用 |
+| `outDir` | 会话工作区 | 输出目录 |
+| `forceOcr` / `engine` / `background` | `false` / `auto` / `auto` | 同参数表默认值 |
+| `autoInstallDeps` | `true` | 缺 OCR 依赖时自动 pip 安装 |
+| `ocr.python` | 自动探测 | Python 解释器(`python`/`py`/`python3`) |
+| `ocr.workers` | `0`(资源感知) | 并行 worker;`1`=进程内快速路径(沙箱/调试) |
+| `ocr.foregroundMaxPages` | `30` | 前台 OCR 页数闸门;`0` 不限制 |
+| `vision.complexityRatio` | `0.4` | 表格+公式区域占比换轨阈值 |
+| `vision.autoBrief` | `true` | 文字层发现截图页时自动生成 `onlyPages` 子集任务书 |
+| `legacy.backend` | `auto` | WPS / Office / LibreOffice 自动探测 |
 
 ### 装配与复查:`md_convert_assemble`
 
@@ -342,7 +376,8 @@ node lib/cli.js convert test/fixtures/sample3.pdf -o .tmp/smoke --force-ocr --ba
 
 ## 限制
 
-- 加密/损坏文件、部分复杂版面可能转换失败(会给出明确错误)
+- **加密 PDF** 需要用户密码时明确报 `E_ENCRYPTED`(仅 owner 密码/权限加密的文件可正常转换);损坏文件同样给出明确错误码
+- 图片走**本地 RapidOCR**(离线);若 OCR 依赖缺失则回落 MarkItDown/tesseract(**首次需联网**下载 traineddata 到工作目录)
 - MarkItDown 不支持的格式(如 `.pages/.key` 等)会明确报"不支持"
 - **效率优先的取舍**:路由 OCR 选用轻量模型(版面 PP-DocLayout-L、文字 RapidOCR、公式 FormulaNet-S),速度优先,
   质量有基本保证;复杂表格(多层合并/斜线表头)、复杂多栏版面、超小字号可能存在识别不完整
