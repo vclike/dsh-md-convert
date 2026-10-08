@@ -3,6 +3,41 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.11] - 2026-10-09
+
+### Fixed(修复)
+
+- **宏格式 `docm/xlsm/pptm` 与 `epub` 现在给出可操作的错误提示**(P4 / W4-8 + W4-10)。
+  - ⚠️ **计划原写"W4-8 补宏格式白名单",实测判定为错误**:引擎
+    `extensionToFormat`(`markitdown-node/dist/index.cjs`)实测只含
+    `pdf docx pptx xlsx html htm vtt srt png jpg jpeg tiff tif csv json txt xml rss atom zip ipynb`,
+    **不含 docm/xlsm/pptm,也不含 epub**;直接调 `detectFormat` 实测三者均无法解析成格式。
+    若按原计划放进白名单,用户会收到 "Unable to detect document format" ——
+    正是 `detect.js` 顶部警告的那种**误导性错误**(以为文件坏了)。
+  - 正确做法:列入"引擎无后端"集合 `ENGINE_NO_BACKEND_EXT`,并给**针对该格式**的补救建议:
+    - `docm` → "请用 Word/WPS 另存为 .docx(去掉宏)后再试"
+    - `xlsm` → 另存为 `.xlsx`;`pptm` → 另存为 `.pptx`
+    - `epub` → "请先转为 .pdf 或 .html 再试"
+  - 此前这些格式走的是通用兜底文案;若沿用图片那句"请先转为 png/jpg 等受支持格式",
+    对宏文档是**荒谬建议** —— 现按格式分流。
+  - 端到端实测:`docm/xlsm/pptm/epub` 均返回 `E_UNSUPPORTED_FORMAT` + 对应建议;
+    `gif` 仍是图片那句建议;未知格式(`xyz`)保持原样不乱给建议。
+
+### Not done(明确不做,附理由)
+
+- **W4-9 worker 回传 `json` + `format`**:实测引擎 `convert()` 确实返回
+  `json_content`(结构化 JSON)与 `document`,技术上可回传。但**全仓无任何消费方**
+  (`grep json_content|\.json` 无命中),插件产物就是 markdown。
+  增加一个无人读取的字段属于本仓库多处明确反对的"无需求的功能膨胀",
+  故**不做**,在此记录以免日后重复讨论。
+  (注意:计划里的 `--json` 是 **CLI 结果 JSON**,与本项原意不同,该项已完成。)
+
+### Verified(验证)
+
+- 新增 3 项单测(共 8 项 detect 测试全绿):宏格式/epub 不得进白名单、
+  每个无后端格式都有针对性建议且**不得**被建议"转为图片"、黑白名单不得交叉。
+- `node --test` **177/180**(新增 3 项)、`test:py` 全 PASS、golden 无退化(含扫描件)。
+
 ## [0.7.10] - 2026-10-09
 
 ### Fixed(修复)
