@@ -56,6 +56,23 @@
     md 内容**逐字节一致**。新增 `lib/py/selftest_state.py`(5 项)与 `test/jobs-statekey.test.js`、
     `test/jobs.test.js` 两项决策回归。
 
+- **公式模型改懒加载**(W3-5):`routing_ocr.py` 的 `FormulaRecognition`(PP-FormulaNet_plus-S)
+  此前在 `__init__` **急加载**,而同文件自称"懒加载各子模型"(表格结构/单元格早已懒加载)。
+  改为 `formula_engine()` 按需构建并在实例内复用。实测:`RoutingOCR()` 构造 6.18s 且不再
+  加载公式模型,首次使用才付 **4.98s**;模型 251.4MB → **每 worker 省 251MB 常驻**
+  (默认 4 worker ≈ 1GB)。
+- **零风险批**(W3-6):
+  - `detectPython`/`findMissingModules`/`ocrModelCacheStatus` **结果缓存**(一次转换会命中
+    detectPython 2~3 次,单次 27ms;后两者 68ms/30ms);pip 安装成功后 `resetDepsCache()`
+    清缓存,避免拿到过期的缺失清单。
+  - `isPython` **先试无管道形态**(`stdio:"ignore"` 只看退出码),失败再退回管道形态 →
+    受限上下文(容器/沙箱)里不再因管道 EPERM 导致 `detectPython` 恒 null、整条文字层
+    主链被静默跳过降级 markitdown(实测 `encoding:'utf8'` EPERM / `stdio:'ignore'` status=0)。
+  - 页数探查**复用**:工具层已探查的页数经 `pageCountHint` 传入,省一次 python 冷启。
+  - legacy COM 退避改用主线程 `sleepSync`(不再为睡 2.5s 额外冷启一个 powershell)。
+  - markitdown **宿主进程内失败粘性标记**(按宿主解析链失败特征置位,只对真实实现生效),
+    后续转换直接走子进程桥,省一次注定失败的尝试。
+
 ### 实测(CLI 端到端,真实中文文档)
 
 | 文档 | 归并前注入 | 归并后 | CJK 字符 | 表格行 |
