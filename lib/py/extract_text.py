@@ -38,6 +38,11 @@ except Exception:
     table_rebuild = None
 
 try:
+    import table_extract  # 同目录 PyMuPDF find_tables 提取(v0.7.2 W2-4)
+except Exception:
+    table_extract = None
+
+try:
     import pypdfium2.raw as pdfium_c
 except Exception:  # pragma: no cover - raw 模块缺失时链接/图像占比/表格降级
     pdfium_c = None
@@ -494,6 +499,8 @@ def main():
     ap.add_argument("--no-headers", action="store_true", help="关闭页眉页脚剥离")
     ap.add_argument("--no-headings", action="store_true", help="关闭标题层级重建")
     ap.add_argument("--no-tables", action="store_true", help="关闭线框表格重建")
+    ap.add_argument("--legacy-tables", action="store_true",
+                    help="只用自研几何法建表(v0.7.2 W2-4 前的行为;A/B 与回退用)")
     ap.add_argument("--margin", type=float, default=MARGIN_RATIO, help="边距带比例(默认 0.12)")
     args = ap.parse_args()
     try:
@@ -508,7 +515,12 @@ def main():
         "tables_rebuilt": 0, "char_rebuilt_pages": 0,
         "char_rebuild_rejected_pages": 0,
         "strip_protected_pages": 0,
+        "tables_pymupdf": 0, "tables_legacy": 0, "table_pages_legacy_pref": 0,
     }
+    # v0.7.2 W2-4: PyMuPDF find_tables 文档句柄(整册开一次;失败则全程退回自研几何法)
+    mupdf_doc = None
+    if table_extract is not None and not args.no_tables:
+        mupdf_doc = table_extract.open_doc(args.pdf)
     pages_meta = []
     raw_pages = []  # [(no, page, tp, lines)]
     for i in range(len(pdf)):
@@ -560,12 +572,37 @@ def main():
     pages = []
     for no, page, tp, lines in raw_pages:
         # v0.6.6 表格重建:线框网格 → md 表格;区域内文本行由表格块替代
+        # v0.7.2 W2-4: 默认改用 PyMuPDF `find_tables()`(实测单元格干净、无跨列串接),
+        #   假表由行/列下限过滤(c1 逐字符页会被误判出 11 个 1 行假表);
+        #   但若它的表含超长单元格(SUSPECT_CELL_LEN,"正文塞进单元格")且自研几何法
+        #   在本页也检出表,则改用自研产物 —— golden 样本实证: 这类页上被验收断言认可的
+        #   形态来自自研几何法(按长度直接拒收会把承载断言的真表一起误杀)。
         tables = []
-        if not args.no_tables and table_rebuild is not None and tp is not None:
-            try:
-                tables = table_rebuild.rebuild_tables(page, tp)
-            except Exception:
-                tables = []
+        if not args.no_tables and tp is not None:
+            ft, ft_max = [], 0
+            if mupdf_doc is not None:
+                try:
+                    ex = table_extract.extract_tables(mupdf_doc, no - 1, page)
+                    ft, ft_max = ex["tables"], ex["max_cell_len"]
+                except Exception:
+                    ft, ft_max = [], 0
+            rb = []
+            if table_rebuild is not None:
+                try:
+                    rb = table_rebuild.rebuild_tables(page, tp)
+                except Exception:
+                    rb = []
+            if args.legacy_tables or not ft:
+                tables = rb
+            elif rb and ft_max > table_extract.SUSPECT_CELL_LEN:
+                tables = rb
+                notes["table_pages_legacy_pref"] = notes.get("table_pages_legacy_pref", 0) + 1
+            else:
+                tables = ft
+            if tables is ft and ft:
+                notes["tables_pymupdf"] = notes.get("tables_pymupdf", 0) + len(ft)
+            elif tables is rb and rb:
+                notes["tables_legacy"] = notes.get("tables_legacy", 0) + len(rb)
         notes["tables_rebuilt"] = notes.get("tables_rebuilt", 0) + len(tables)
         kept = []
         strip_dropped_here = 0

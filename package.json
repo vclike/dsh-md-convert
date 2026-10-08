@@ -63,7 +63,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "test:py": "python lib/py/selftest_extract.py && python lib/py/selftest_state.py"
+    "test:py": "python lib/py/selftest_extract.py && python lib/py/selftest_state.py && python lib/py/selftest_tables.py"
   },
   "engines": {
     "node": ">=18.0.0"
