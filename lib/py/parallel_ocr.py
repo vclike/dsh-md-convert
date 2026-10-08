@@ -350,7 +350,12 @@ def _run_ocr(pdf_path, args):
         pdf = pdfium.PdfDocument(pdf_path)
         total = len(pdf)
     except Exception as e:
-        _emit({"event": "done", "warnings": ["致命错误: PDF 打开失败: %s" % str(e)[:300]]})
+        msg = str(e)[:300]
+        # v0.7.2 W4-5: 加密 PDF 明确文案(此前与普通打开失败混在一起)
+        if "password" in msg.lower() or "encrypt" in msg.lower():
+            _emit({"event": "done", "warnings": ["致命错误: PDF 已加密,需要密码(本插件暂不支持加密 PDF): %s" % msg]})
+            return 1
+        _emit({"event": "done", "warnings": ["致命错误: PDF 打开失败: %s" % msg]})
         return 1
 
     total_eff = min(total, args.limit_pages) if args.limit_pages and args.limit_pages > 0 else total

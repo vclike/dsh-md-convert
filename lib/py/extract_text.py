@@ -506,7 +506,17 @@ def main():
     try:
         pdf = pdfium.PdfDocument(args.pdf)
     except Exception as e:
-        print(json.dumps({"ok": False, "error": "PDF 打开失败: %s" % str(e)[:200]}, ensure_ascii=False))
+        msg = str(e)[:200]
+        # v0.7.2 W4-5: 加密 PDF 给专属错误码与明确文案 —— 否则上层会继续走扫描件路由,
+        # 白跑探针+渲染后才报误导性的 E_OCR_RUN("PDF 打开失败")。
+        # 判据: pdfium 对"用户密码"加密抛 Incorrect password error;
+        # 仅 owner 密码(权限加密)的文件**能正常打开**,不会误判。
+        if "password" in msg.lower() or "encrypt" in msg.lower():
+            print(json.dumps({"ok": False, "code": "E_ENCRYPTED",
+                              "error": "PDF 已加密,需要密码(本插件暂不支持加密 PDF): %s" % msg},
+                             ensure_ascii=False))
+            return 1
+        print(json.dumps({"ok": False, "error": "PDF 打开失败: %s" % msg}, ensure_ascii=False))
         return 1
 
     notes = {

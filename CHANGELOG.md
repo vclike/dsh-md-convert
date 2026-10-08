@@ -42,6 +42,19 @@
   - 白名单改为**镜像**引擎的 `extensionToFormat`(`dist/index.cjs:2032-2057`)并加**防漂移
     单测**:白名单与引擎 mapping 必须双向一致,否则测试失败。
     新增 `test/detect.test.js`(5 项)。
+- **加密 PDF 的误导性错误码**(W4-5):加密 PDF 此前先白跑文字层两层,再落**扫描件路由**,
+  最后报 `E_OCR_RUN`「PDF 打开失败」——**用户看不到"加密"这个真因**。
+  (更正实测:旧路径的额外时间浪费其实很小 —— 探针 0.33s + OCR 尝试 0.34s,因为打开 PDF
+  即失败、未加载任何模型;本项价值在**错误码与文案的正确性**,不在省时。)
+  - 新增错误码 **`E_ENCRYPTED`**(码表只追加不改既有码)。
+  - `extract_text.py` / `parallel_ocr.py` 在打开失败时按 `password`/`encrypt` 判据给出
+    明确文案;`textlayer.js` **透传 python 侧错误码**(并修:非 0 退出时会吞掉结构化错误);
+    `convert.js` 与 `lib/index.js` 在拿到 `E_ENCRYPTED` 时**立即收敛**,不再尝试 markitdown
+    或扫描件路由。
+  - 判据已验证:**仅"用户密码"加密**才抛 `Incorrect password error`;**owner 密码(权限加密)
+    的文件能正常打开**,不会误判。
+    新增 `test/encrypted.test.js`(1 项:报 E_ENCRYPTED、文案含"加密"、无 OCR 路由痕迹、
+    attempts 仍记录文字层为何不可用)。
 
 ### Added(新增)
 
