@@ -29,7 +29,9 @@ const SAMPLES = join(ROOT, "test", "golden", "samples");
 export const BASELINE = process.env.MDC_GOLDEN_BASELINE || join(ROOT, "test", "golden", "baseline.json");
 const OUT = join(ROOT, "test", "golden", ".out");
 
-/** 6 类样本(计划 §W0-2);light=可进默认单测,slow=需 MDC_GOLDEN_SCAN=1 */
+/** 样本类别(计划 §W0-2 + v0.7.12 的 Docling 扩充)。
+ *  light=可进默认单测(实测 <1.2s);slow=需 MDC_GOLDEN_SCAN=1;其余走 test:golden。
+ *  `dl-` 前缀 = 来自 Docling(MIT)开源测试集,仅本地使用,见 samples/SOURCES.md。 */
 export const SAMPLE_CLASSES = [
 	{ id: "char-layer", file: "char-layer-11p.pdf", cls: "①逐字符文字层", light: false },
 	{ id: "textlayer-multi-img", file: "textlayer-multi-img.pdf", cls: "②文字层+多图", light: false },
@@ -37,6 +39,30 @@ export const SAMPLE_CLASSES = [
 	{ id: "office-cn-table", file: "office-cn-table.docx", cls: "④Office", light: true },
 	{ id: "bigtable-34p", file: "bigtable-34p.pdf", cls: "⑤大表格", light: false },
 	{ id: "gbk-text", file: "gbk-text.txt", cls: "⑥GBK 文本", light: true },
+
+	// ── v0.7.12 Docling(MIT)补充:Office 细分结构 + 英文 PDF 版式 ──
+	// 实测耗时:docx 29~1102ms(进默认单测);pdf 423~579ms(需 python 进程,走 test:golden)
+	{ id: "dl-word-tables", file: "dl-word_tables.docx", cls: "⑦Docx表格", light: true },
+	{ id: "dl-tablecell", file: "dl-tablecell.docx", cls: "⑧Docx表格单元格", light: true },
+	{ id: "dl-lists", file: "dl-docx_lists.docx", cls: "⑨Docx列表", light: true },
+	{ id: "dl-headers", file: "dl-unit_test_headers.docx", cls: "⑩Docx标题层级", light: true },
+	{
+		id: "dl-hdrftr-firstpage",
+		file: "dl-docx_page_header_footer_first_page.docx",
+		cls: "⑪Docx首页页眉页脚",
+		light: true,
+	},
+	{ id: "dl-eastasian-num", file: "dl-docx_list_east_asian_num_fmt.docx", cls: "⑫Docx东亚编号", light: true },
+	{ id: "dl-word-sample", file: "dl-word_sample.docx", cls: "⑬Docx通用", light: true },
+	{ id: "dl-pdf-4p", file: "dl-normal_4pages.pdf", cls: "⑭英文4页PDF", light: false },
+	{ id: "dl-pdf-multipage", file: "dl-multi_page.pdf", cls: "⑮英文多页PDF", light: false },
+	{
+		id: "dl-pdf-table-as-img",
+		file: "dl-table_mislabeled_as_picture.pdf",
+		cls: "⑯表被误判为图",
+		light: false,
+	},
+	{ id: "dl-pdf-code-formula", file: "dl-code_and_formula.pdf", cls: "⑰代码与公式PDF", light: false },
 ];
 
 /**
