@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, mergeCrossPageTables, parseAnchoredPages, parseNdjsonLine, stateKeyFor } from "../lib/core/jobs.js";
+import { adaptiveEtaSec, assembleMd, createOcrRun, defaultWorkers, estimateEtaSec, mergeCrossPageTables, parseAnchoredPages, parseNdjsonLine, stateKeyFor } from "../lib/core/jobs.js";
 import { ERROR_CODES } from "../lib/core/errors.js";
 
 function tmpDir(tag) {
@@ -103,8 +103,26 @@ test("assembleMd: 页号升序拼装 + 标题", () => {
 
 /* ---------------- ETA 标定(bench.md) ---------------- */
 
+test("estimateEtaSec: 默认均耗已按实测中位重标定(27s/页)", () => {
+	// v0.7.3 W3-8:实测 7 页真实扫描页 18.5~62.8s(中位 27.4),旧默认 15 偏乐观约 1.8×
+	assert.equal(estimateEtaSec(97, 1), Math.ceil(97 * 27));
+	assert.equal(estimateEtaSec(97, 4), Math.ceil((97 * 27) / 4) + 40);
+	assert.ok(estimateEtaSec(97, 1) > estimateEtaSec(97, 1, 15), "重标定后必须比旧默认更保守");
+});
+
+test("adaptiveEtaSec: 用本次实测逐页耗时推算剩余;证据不足返回 null 不编数字", () => {
+	// 3 页实测 20/30/40 → 均 30;剩 7 页 / 4 worker → ceil(7×30/4)=53
+	assert.equal(adaptiveEtaSec({ 1: 20, 2: 30, 3: 40 }, 3, 10, 4), 53);
+	assert.equal(adaptiveEtaSec({ 1: 25 }, 1, 1, 1), 0, "已全部完成 → 0");
+	assert.equal(adaptiveEtaSec({}, 0, 10, 4), null, "无实测证据 → null");
+	assert.equal(adaptiveEtaSec({ 1: 0, 2: -3 }, 0, 10, 4), null, "非正耗时不计入");
+	assert.equal(adaptiveEtaSec({ 1: 20 }, 1, 0, 4), null, "总页数未知 → null");
+	// workers=0 → 按资源感知默认口径(与实际执行的 worker 数一致)
+	assert.equal(adaptiveEtaSec({ 1: 20 }, 1, 5, 0), Math.ceil((4 * 20) / defaultWorkers()));
+});
+
 test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按资源感知默认(F5)", () => {
-	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)
+	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)(显式传 15 保持旧标定用例可回归)
 	assert.equal(estimateEtaSec(97, 1, 15), 1455);
 	// workers=4: 线性 364 + 开销 40 = 404 ∈ captain 标定区间 400-420s
 	const w4 = estimateEtaSec(97, 4, 15);

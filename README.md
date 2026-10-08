@@ -279,6 +279,7 @@ md_convert({ file: "扫描件.pdf", engine: "vision" })       // 强制 vision �
 | `ocr.python` | 自动探测 | Python 解释器(`python`/`py`/`python3`) |
 | `ocr.workers` | `0`(资源感知) | 并行 worker;`1`=进程内快速路径(沙箱/调试) |
 | `ocr.foregroundMaxPages` | `30` | 前台 OCR 页数闸门;`0` 不限制 |
+| `ocr.etaPerPageSec` | `27` | **v0.7.3 重标定**:运行前 ETA 的单页均耗(实测中位 27.4s,旧值 15 偏乐观约 1.8×)。运行中另用 `progress.json` 的 `etaSec` 自适应修正 |
 | `vision.complexityRatio` | `0.4` | 表格+公式区域占比换轨阈值 |
 | `vision.autoBrief` | `true` | 文字层发现截图页时自动生成 `onlyPages` 子集任务书 |
 | `legacy.backend` | `auto` | WPS / Office / LibreOffice 自动探测 |

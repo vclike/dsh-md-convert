@@ -217,6 +217,7 @@ Plugin config (`cordis.patch.yml`, validated by Schemastery, no hardcoding):
         cjkMerge: true          # v0.7.2: merge CJK inter-character spaces (pure rules, zero new deps)
         background: "auto"      # background jobs for OCR-class tasks: auto | true | false
         engine: "auto"          # scanned-PDF engine routing: auto | local | vision
+        etaPerPageSec: 27       # v0.7.3: sec/page used by the pre-run ETA (measured median; was 15)
         ocr:
           python: ""            # Python interpreter (empty = auto-detect)
           workers: 0            # parallel workers; 0 = resource-aware min(CPU,4,RAM budget); 1 = in-process fast path (sandbox/containers)
