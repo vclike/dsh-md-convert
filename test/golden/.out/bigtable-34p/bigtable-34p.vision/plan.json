@@ -1,0 +1,200 @@
+{
+	"planVersion": 1,
+	"kind": "md-convert-vision-brief",
+	"createdAt": "2026-10-08T17:55:30.980Z",
+	"source": {
+		"pdf": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\samples\\bigtable-34p.pdf",
+		"base": "bigtable-34p",
+		"totalPages": 32,
+		"pageList": [
+			3,
+			5,
+			6,
+			7,
+			8,
+			10,
+			11,
+			12,
+			14,
+			15,
+			17,
+			18,
+			19,
+			23,
+			24,
+			25,
+			26,
+			27,
+			28,
+			29,
+			30,
+			31,
+			32
+		],
+		"subset": true
+	},
+	"render": {
+		"scale": 2,
+		"pagesDir": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages"
+	},
+	"promptTemplate": {
+		"path": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\lib\\py\\prompts\\vision-ocr.md",
+		"overridden": false
+	},
+	"batches": [
+		{
+			"id": "batch-01",
+			"from": 3,
+			"to": 12,
+			"pages": [
+				3,
+				5,
+				6,
+				7,
+				8,
+				10,
+				11,
+				12
+			],
+			"pageList": [
+				3,
+				5,
+				6,
+				7,
+				8,
+				10,
+				11,
+				12
+			],
+			"imageFiles": [
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-03.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-05.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-06.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-07.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-08.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-10.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-11.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-12.png"
+			],
+			"promptFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\prompts\\batch-01.md",
+			"outputFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\outputs\\batch-01.md",
+			"status": "pending"
+		},
+		{
+			"id": "batch-02",
+			"from": 14,
+			"to": 25,
+			"pages": [
+				14,
+				15,
+				17,
+				18,
+				19,
+				23,
+				24,
+				25
+			],
+			"pageList": [
+				14,
+				15,
+				17,
+				18,
+				19,
+				23,
+				24,
+				25
+			],
+			"imageFiles": [
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-14.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-15.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-17.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-18.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-19.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-23.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-24.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-25.png"
+			],
+			"promptFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\prompts\\batch-02.md",
+			"outputFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\outputs\\batch-02.md",
+			"status": "pending"
+		},
+		{
+			"id": "batch-03",
+			"from": 26,
+			"to": 32,
+			"pages": [
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32
+			],
+			"pageList": [
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32
+			],
+			"imageFiles": [
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-26.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-27.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-28.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-29.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-30.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-31.png",
+				"D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\pages\\p-32.png"
+			],
+			"promptFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\prompts\\batch-03.md",
+			"outputFile": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\outputs\\batch-03.md",
+			"status": "pending"
+		}
+	],
+	"outputContract": {
+		"anchorFormat": "<!--PAGE:NN--> … <!--/PAGE:NN-->(NN 两位补零,>99 页自然扩展)",
+		"anchorRegex": "<!--PAGE:(\\d{2,})-->([\\s\\S]*?)<!--/PAGE:\\1-->",
+		"rules": [
+			"每页一对锚点、页号与 plan.pageList 一致、不得缺页/重页",
+			"逐字保真:不改写/不翻译/不补全;无法辨认处用 <!-- 第N页…无法辨认 --> 占位",
+			"只输出 Markdown 正文,不用代码围栏包裹全文"
+		]
+	},
+	"assemble": {
+		"tool": "md_convert_assemble",
+		"planPath": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\plan.json",
+		"finalOutput": "D:\\WorkSpace\\Planing-Workdeck\\.tmp\\dsh-md-convert-dev\\test\\golden\\.out\\bigtable-34p\\bigtable-34p.vision\\bigtable-34p-p3-p32.md",
+		"merge": {
+			"kind": "anchor-replace",
+			"pages": [
+				3,
+				5,
+				6,
+				7,
+				8,
+				10,
+				11,
+				12,
+				14,
+				15,
+				17,
+				18,
+				19,
+				23,
+				24,
+				25,
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32
+			],
+			"note": "子集计划:本产物仅含 source.pageList 各页;将产物中的 <!--PAGE:NN--> 块逐一替换文字层版 md 的同名锚点块即完成合并"
+		}
+	}
+}

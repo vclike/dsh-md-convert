@@ -152,6 +152,54 @@ test("速度:createOcrRun 给每个 worker 钉线程(默认 核数/worker 数,�
 	assert.equal(opts2.env?.DSH_OCR_THREADS, "3");
 });
 
+test("v0.7.4:扫描件页 md 做中文行间空格归并(并计数告警)", async () => {
+	// 实测 97 页真实扫描件整册 468 处注入(表格单元格内多行 OCR 用 " " 拼接),文字层类别是 0
+	const dir = tmpDir("cjk-ocr");
+	const script = {
+		lines: [
+			{ delay: 1, line: line({ event: "start", total: 1 }) },
+			{ delay: 1, line: line({ event: "page", no: 1, md: "<!--PAGE:01-->\n\n平台 服务 内容\n\n<!--/PAGE:01-->", stats: {}, duration: 1 }) },
+			{ delay: 1, line: line({ event: "done", warnings: [] }) },
+		],
+	};
+	const mdPath = join(dir, "doc.md");
+	const r = await createOcrRun({
+		python: "python", script: "p.py", pdf: "doc.pdf", workers: 1,
+		mdPath, statePath: join(dir, "s.json"), progressPath: join(dir, "p.json"),
+		spawnStreamImpl: makeFake(script),
+	});
+	const md = readFileSync(mdPath, "utf8");
+	assert.ok(!/[\u4e00-\u9fa5] [\u4e00-\u9fa5]/.test(md), `页 md 不应残留中文行间空格: ${JSON.stringify(md)}`);
+	assert.ok(md.includes("平台服务内容"), "归并后应连成词");
+	assert.ok((r.warnings ?? []).some((w) => w.includes("[中文归并]")), `应有归并告警: ${JSON.stringify(r.warnings)}`);
+});
+
+test("v0.7.4:跨页合并后片段页块补一句说明(不留空页)", () => {
+	const md = [
+		"<!--PAGE:01-->", "", "| A | B |", "| --- | --- |", "| a | b |", "", "<!--/PAGE:01-->", "",
+		"<!--PAGE:02-->", "", "| c | d |", "| --- | --- |", "| e | f |", "", "<!--/PAGE:02-->",
+	].join("\n");
+	const out = mergeCrossPageTables(md);
+	assert.ok(out.includes("<!-- 本页内容为上页表格续接(已合并) -->"), `片段页块应补说明:\n${out}`);
+	assert.ok(out.includes("<!--PAGE:02-->") && out.includes("<!--/PAGE:02-->"), "锚点必须保留");
+	// 只有片段页(02)被搬空 → 只补一句
+	assert.equal((out.match(/本页内容为上页表格续接/g) ?? []).length, 1);
+});
+
+test("v0.7.4:同一链里多个空页块都要补说明(不止第一个)", () => {
+	// 三页连表:01 表头 + 02 续接 + 03 续接 → 02/03 都应变空并各自补说明
+	const md = [
+		"<!--PAGE:01-->", "", "| A | B |", "| --- | --- |", "| a | b |", "", "<!--/PAGE:01-->", "",
+		"<!--PAGE:02-->", "", "| c | d |", "| --- | --- |", "| e | f |", "", "<!--/PAGE:02-->", "",
+		"<!--PAGE:03-->", "", "| g | h |", "| --- | --- |", "| i | j |", "", "<!--/PAGE:03-->",
+	].join("\n");
+	const out = mergeCrossPageTables(md);
+	assert.equal((out.match(/本页内容为上页表格续接/g) ?? []).length, 2, `两个空页都该有说明:\n${out}`);
+	assert.equal((out.match(/<!--PAGE:/g) ?? []).length, 3, "锚点必须保留");
+	// 仍应合成一张表(一个分隔行)
+	assert.equal(out.split("\n").filter((l) => /^\|\s*---/.test(l.trim())).length, 1);
+});
+
 test("estimateEtaSec: workers=1 按页数×单页均耗;workers>1 加固定开销落标定区间;workers=0 按资源感知默认(F5)", () => {
 	// workers=1: 97×15 = 1455(bench 实测 1398s,偏差 +4%)(显式传 15 保持旧标定用例可回归)
 	assert.equal(estimateEtaSec(97, 1, 15), 1455);

@@ -1,0 +1,72 @@
+{
+	"char-layer": {
+		"ok": true,
+		"code": null,
+		"chain": "pymupdf4llm(段落合并直提)",
+		"chars": 4850,
+		"bodyChars": 4367,
+		"cjkPer1k": 0,
+		"tables": 0,
+		"tableRows": 0,
+		"headings": 6,
+		"anchors": 11,
+		"qualityScore": 100,
+		"ms": 20341
+	},
+	"textlayer-multi-img": {
+		"ok": true,
+		"code": null,
+		"chain": "pymupdf4llm(段落合并直提)",
+		"chars": 6897,
+		"bodyChars": 5910,
+		"cjkPer1k": 0,
+		"tables": 2,
+		"tableRows": 15,
+		"headings": 23,
+		"anchors": 9,
+		"qualityScore": 100,
+		"ms": 11517
+	},
+	"office-cn-table": {
+		"ok": true,
+		"code": null,
+		"chain": "markitdown",
+		"chars": 374,
+		"bodyChars": 299,
+		"cjkPer1k": 0,
+		"tables": 1,
+		"tableRows": 5,
+		"headings": 4,
+		"anchors": 0,
+		"qualityScore": null,
+		"ms": 1507
+	},
+	"bigtable-34p": {
+		"ok": true,
+		"code": null,
+		"chain": "pypdfium2(结构增强直提)",
+		"chars": 17504,
+		"bodyChars": 13516,
+		"cjkPer1k": 0,
+		"tables": 13,
+		"tableRows": 85,
+		"headings": 66,
+		"anchors": 23,
+		"qualityScore": 100,
+		"ms": 3717
+	},
+	"gbk-text": {
+		"ok": true,
+		"code": null,
+		"chain": "text",
+		"chars": 150,
+		"bodyChars": 127,
+		"cjkPer1k": 0,
+		"tables": 0,
+		"tableRows": 0,
+		"headings": 1,
+		"anchors": 0,
+		"qualityScore": null,
+		"ms": 24
+	}
+}

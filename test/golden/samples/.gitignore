@@ -1,0 +1,4 @@
+# golden 大样本是本地资产,不入库(见同目录 README.md);缺失时 test:golden 显式 SKIP 对应类别
+char-layer-11p.pdf
+textlayer-multi-img.pdf
+bigtable-34p.pdf
