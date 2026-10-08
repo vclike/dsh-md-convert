@@ -82,6 +82,14 @@ CHAR_REBUILD_MAX_CHARS = 50000
 CHAR_ROW_SPLIT_RATIO = 1.5
 CHAR_ROW_SPLIT_MAX_MINORITY = 0.4
 
+# 逐字符定位文字层的第二判据(v0.7.2 W1-4): 真实字符数 / 行框数 <= 此值 = 每框≈1 字。
+#   原判据只看 _page_avg_chars_per_box(lines) < 1.5, 而该值会被 rect 重叠放大 ——
+#   实测 c1 p4 为 68 框/68 真实字符(=1.00 字/框, 确属逐字符定位)却因 avgbox=2.324 漏触发,
+#   p9 同理(33/33=1.00, avgbox=3.364), 两页输出均长仅 2.3/3.4 字符。
+#   真机校准(2026-10-08): c1 逐字符页为 1.00~1.04;c2 正常页为 3.13~5.81(最小 p32=3.13)
+#   → 取 1.2, 距正常页有 2.6 倍余量。
+CHAR_POSITION_MAX_CHARS_PER_RECT = 1.2
+
 
 def _utf8_stdio():
     """Windows 管道默认 GBK,JSON 输出强制 UTF-8。"""
@@ -511,7 +519,12 @@ def main():
             tp = None
         lines = _page_lines(tp) if tp is not None else None
         # v0.6.13 逐字符文字层兜底: 平均 <1.5 字符/行框(字符级定位) → 坐标重建阅读行
-        if lines and _page_avg_chars_per_box(lines) < 1.5 and tp is not None:
+        # v0.7.2 W1-4: 触发判据补第二支——"真实字符数/行框数 <= 1.2"(每框≈1字)。
+        #   原判据的 avgbox 会被 rect 重叠放大, 漏掉 c1 p4/p9 这类同样逐字符定位的页。
+        if lines and tp is not None and (
+            _page_avg_chars_per_box(lines) < 1.5
+            or _page_true_chars(tp) <= CHAR_POSITION_MAX_CHARS_PER_RECT * len(lines)
+        ):
             rebuilt = _char_rebuild_lines(tp)
             # v0.7.2 W1-1: 采纳基线改用"页面真实非空白字符数",替代
             # sum(len(t) for _,_,t in lines)——后者对逐字符页会因 rect 重叠而虚高约 10%,
