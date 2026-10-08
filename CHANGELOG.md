@@ -55,6 +55,11 @@
     的文件能正常打开**,不会误判。
     新增 `test/encrypted.test.js`(1 项:报 E_ENCRYPTED、文案含"加密"、无 OCR 路由痕迹、
     attempts 仍记录文字层为何不可用)。
+- **`autoInstallDeps` 开关实际无法生效**(W5-2):文字层依赖自动补装读的是 `opts.depsAutoInstall`
+  —— 全仓**没有任何调用方**设置该键(默认值 / 工具层 / CLI 一律用 `autoInstallDeps`),
+  条件恒为真,唯一设置它的是测试注入 → **该开关关不掉**。现改读真实键 `autoInstallDeps`,
+  测试同步改注入名,并在 v0.7.1 段落下补勘误(其发版说明把键名误写成 `depsAutoInstall`)。
+  负向验证:`autoInstallDeps:false` 时 `pythonText` 只被调用一次(补装路径未被触发)。
 
 ### Added(新增)
 
@@ -137,6 +142,15 @@
     c1/纯扫描件行为不变(0 表);**golden 六条用例全部通过**。
     新增 `lib/py/selftest_tables.py`(10 项)并接入 `npm run test:py`。
 
+### Removed(移除)
+
+- **无触发路径的整份 OCR 包装**(W5-3,反熵退役):`lib/core/ocr.js` 的 `ocrPpstructure` 与其
+  专属常量 `ROUTING_SCRIPT` 已删除 —— v0.6.0 起扫描件路由只走 `ocrPpstructureParallel`,
+  **没有任何配置或错误路径会选择它**,属"两个 owner 并存"的熵。
+  **能力未丢**:Python 参考实现 `lib/py/routing_ocr.py` 保留不动(`parallel_ocr.py` 复用其引擎),
+  仍可手动 `python lib/py/routing_ocr.py <pdf>` 做对比;退役说明留在 `ocr.js` 头注释里。
+  (ocr.js 142 → 102 行;随之移除只被它使用的 `runAsync` 导入。)
+
 ### 实测(CLI 端到端,真实中文文档)
 
 | 文档 | 归并前注入 | 归并后 | CJK 字符 | 表格行 |
@@ -157,7 +171,9 @@
 
 - **依赖缺失自动安装+重试**:直提失败且原因匹配 No module named
   (pypdfium2/pymupdf4llm)时,自动 pip 补装并重试一次
-  (`depsAutoInstall:false` 可禁);仍失败则 warnings 附精确 pip 修复命令。
+  (`autoInstallDeps:false` 可禁);仍失败则 warnings 附精确 pip 修复命令。
+  > 勘误(v0.7.2):本条原写作 `depsAutoInstall:false`,与真实配置键不符 —— 且代码侧读的正是
+  > 这个不存在的键,导致该开关**实际无法生效**。v0.7.2 已改读 `autoInstallDeps`(W5-2)。
 - README **依赖分级一览表**(必需/推荐/按需三级,缺失后果列明)。
 - PY_MODULES 纳入 pymupdf4llm(`dsh-md-convert deps` 命令自动覆盖)。
 
