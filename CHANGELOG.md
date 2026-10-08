@@ -67,6 +67,17 @@
   配置 `cjkMerge`(默认 true)/ CLI `--no-cjk-merge`;归并 ≥5 处时 warnings 透出计数。
 - **采纳判据改为"归并后比优"**(W2-3):两个候选**都先归并再比 score**,避免"结构好但中文
   被插空格"的候选胜出;自研链 / pymupdf4llm / markitdown 兜底三条路径全覆盖。
+- **图片改走本地离线 OCR**(W4-2):图片此前只走 markitdown 的 tesseract.js —— 语言硬编码
+  `chi_sim+eng`、**首次使用要从 jsdelivr CDN 下载 traineddata 且默认写进当前工作目录**
+  (污染用户工作区)、失败后无任何离线回退(直接 `E_MARKITDOWN`)。而本插件扫描件链路本就在用
+  PaddleOCR/RapidOCR,且 **rapidocr 的 ONNX 模型随包内置** → 完全离线、零 CDN、零 CWD 写入。
+  图片本质就是"一页扫描件",现改为**优先本地 `lib/py/ocr_image.py`(RapidOCR)**,
+  失败或无文本再回落 markitdown/tesseract(回落时 warnings 明确透出原因)。
+  实测:含中文 PNG **2.0s** 完成识别,三行中文全部识别(仅全角逗号/冒号轻微差异),无网络依赖。
+  - 过程中修掉一个真实缺陷:`ocr_image.py` 首版漏了 `_utf8_stdio()`,而插件其余 python 入口
+    (extract_text / parallel_ocr / render_pages)都有 —— 未设 `PYTHONIOENCODING` 时(即插件
+    宿主的真实环境)stdout 会以 **GBK** 写出中文,Node 按 UTF-8 解码即**乱码**。
+    该问题由新单测在无环境变量下复现并修复。
 
 ### Changed(变更)
 
