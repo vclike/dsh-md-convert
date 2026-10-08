@@ -154,6 +154,9 @@
     (仅支持 `1-N` 前缀),其它形态**明确告警**"未生效"而不是静默按全篇转。
   - 端到端实测(`verify_w44.py`):CLI `--pages 3-5` → 产物锚点 `[3,4,5]`;两个 python 入口
     越界均报"请求的页码超出文档页数(共 11 页):99"。
+  - 扫描件链路实测(`verify_w44_scan.py`,3 页真实扫描片段,`--engine local`):
+    `--pages 1-2` → 产物锚点 `[1,2]`(前缀经 `--limit-pages` 生效);
+    `--pages 2-3` → 锚点 `[1,2,3]` **且告警"未生效"**(不静默);`--pages 9` → exit=1 报"超出文档页数"。
   - 实现中被抓出的两个自身错误:① `pdfPageCount` 是 **async 且两参**(漏 await/漏参都得到 0,
     导致误报 E_OCR_DEPS);② 对 `const o` 整体重新赋值 → `E_UNKNOWN: Assignment to constant variable`。
 
