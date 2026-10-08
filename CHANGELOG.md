@@ -32,6 +32,16 @@
   `ok:true` 且无任何告警(静默内容损坏)。改为 **BOM 优先 → 严格 UTF-8(fatal,不产生
   替换符)→ GB18030 回落**,非 UTF-8 时在 warnings 透出 `[编码] 非 UTF-8 文本已按 … 解码`。
   新增 `test/encoding.test.js`(3 项:GB18030 解码+告警 / UTF-8 无 BOM / UTF-8 BOM 不残留)。
+- **格式白名单与引擎能力对齐**(W4-1):
+  - **假支持**:`gif/bmp/webp` 此前在白名单里,但 markitdown-node **没有**对应 backend
+    (内容嗅探返回 null)→ 用户收到 `Unable to detect document format`,**会以为文件损坏**。
+    实测引擎直吃 gif 即此错。现在移出白名单 → 明确 `E_UNSUPPORTED_FORMAT` +
+    可操作提示(`请先转为 png/jpg 等受支持格式`)。
+  - **漏支持**:`zip` 引擎有 `ZIPBackend`(mapping 里有 zip、`unzipper` 已在依赖内)却被本
+    白名单误挡 → 现在放行,实测可转换(会**递归转换**包内每个文件,由 180s 桥超时兜底)。
+  - 白名单改为**镜像**引擎的 `extensionToFormat`(`dist/index.cjs:2032-2057`)并加**防漂移
+    单测**:白名单与引擎 mapping 必须双向一致,否则测试失败。
+    新增 `test/detect.test.js`(5 项)。
 
 ### Added(新增)
 
