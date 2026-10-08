@@ -221,6 +221,9 @@ class RoutingOCR:
         # begin_page() 做一次整页检测+识别,区域/单元格再按几何复用同一批行。
         self._page_lines = None
         self._per_region = os.environ.get("DSH_OCR_PER_REGION") == "1"  # A/B 与回退开关
+        # v0.7.13: 公式识别失败计数(产物里只留中性占位,真实原因走这里 → warnings)
+        self._formula_errors = 0
+        self._formula_first_error = None
 
     def begin_page(self, img_pil):
         """整页一次 RapidOCR,供本页所有区域/单元格复用(v0.7.3)。
@@ -248,6 +251,17 @@ class RoutingOCR:
         if self.formula is None:
             self.formula = self.FormulaRecognition(model_name="PP-FormulaNet_plus-S")
         return self.formula
+
+    def formula_diagnostics(self):
+        """公式识别失败的可观测信息(v0.7.13):次数 + 首个原因。
+
+        存在的理由:公式识别可能因缺依赖(实测缺 `ftfy`)而**整条失效**,
+        而用户从产物里只能看到占位符,需要一个通道说明"为什么"。
+        """
+        return {
+            "formula_failed": getattr(self, "_formula_errors", 0),
+            "formula_first_error": getattr(self, "_formula_first_error", None),
+        }
 
     # ---------- 路由 ----------
     def ocr_text_region(self, crop, region_box, offset_x, offset_y):
@@ -408,7 +422,16 @@ class RoutingOCR:
                     latex = fres[0]["rec_formula"]
                     parts.append("$$ %s $$" % latex)
                 except Exception as e:
-                    parts.append("$$ [公式识别失败: %s] $$" % str(e)[:80])
+                    # v0.7.13: **不再把内部报错原文写进用户产物**。
+                    # 实证(OmniDocBench 中文页 ⑱):本机缺 `ftfy`(paddleocr 公式后处理依赖),
+                    # 每个公式都失败,产物里出现
+                    #   $$ [公式识别失败: 'NoneType' object has no attribute 'predict'] $$
+                    # 用户看到的是**内部实现细节**,既不可读也不可操作。
+                    # 改为:产物只留一个中性占位(表明"此处有公式但未识别"),
+                    # 真实原因走 warnings/notes 通道(那是诊断该去的地方)。
+                    parts.append("$$[公式未识别]$$")
+                    self._formula_errors += 1
+                    self._formula_first_error = self._formula_first_error or (type(e).__name__ + ": " + str(e)[:120])
             elif label in ("seal", "stamp"):
                 parts.append("<!-- 印章 -->")
         if own_page:

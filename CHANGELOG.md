@@ -3,6 +3,30 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.13] - 2026-10-09
+
+### Fixed(修复)
+
+- **内部报错原文不再泄漏进用户产物**(由新增的中文样本 ⑱ 暴露)。
+  - 现场(12 页中文试卷):产物里出现
+    `$$ [公式识别失败: 'NoneType' object has no attribute 'predict'] $$`
+    —— 这是**内部实现细节**,用户既看不懂也不知道该做什么。
+  - 根因(定位到具体模块):`ModuleNotFoundError: No module named 'ftfy'`
+    —— paddleocr 的公式识别后处理需要 `ftfy`,本机未安装,**每个公式都失败**。
+  - 修复:产物里改为中性占位 `$$[公式未识别]$$`(可读、可定位),
+    真实原因走 `warnings` 通道:`[公式] N 处公式未能识别…;首个原因:…`
+    (`routing_ocr.py` 与 `parallel_ocr.py` 两处原本都会把异常原文写进 md)。
+  - 验证(12 页中文样本,34 处公式):
+    中性占位 **34** 处、内部报错残留 **0**、warnings 正确给出数量与首个原因;
+    并用 `scripts/verify-formula-placeholder.mjs` 证明**唯一变化就是那 34 处文本**,
+    还原后与修复前**去空白逐字符相同**(24731 = 24731)—— 零内容丢失。
+
+### Known limitation(已知限制)
+
+- **公式识别在本机仍然不可用**(缺 `ftfy`)。本次只修复了"错误如何呈现",
+  **没有安装依赖** —— 安装会改动用户全局 Python 环境,属有副作用的操作,留待确认。
+  `ftfy` 为 Apache-2.0 纯 Python 包、仅依赖 `wcwidth`,补装成本极低。
+
 ## [0.7.11] - 2026-10-09
 
 ### Fixed(修复)

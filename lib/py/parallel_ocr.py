@@ -234,7 +234,13 @@ def route_page_stats(engine, img_pil, boxes):
                     latex = fres[0]["rec_formula"]
                     parts.append("$$ %s $$" % latex)
                 except Exception as e:
-                    parts.append("$$ [公式识别失败: %s] $$" % str(e)[:80])
+                    # v0.7.13: 同 routing_ocr —— 产物只留中性占位,原因进 warnings。
+                    # 实测缺 `ftfy` 时每个公式都会失败,原文会变成
+                    # "$$ [公式识别失败: 'NoneType' object has no attribute 'predict' $$"
+                    # 这类内部实现细节,对用户毫无意义。
+                    parts.append("$$[公式未识别]$$")
+                    stats["formula_failed"] = stats.get("formula_failed", 0) + 1
+                    stats.setdefault("formula_first_error", type(e).__name__ + ": " + str(e)[:120])
             elif label in STAMP_LABELS:
                 parts.append("<!-- 印章 -->")
     finally:
@@ -409,6 +415,8 @@ def _run_ocr(pdf_path, args):
             args.resume = None
     page_status = state["pages"] if state else {}
     page_warnings = state["pageWarnings"] if state else {}
+    # v0.7.13: 公式失败汇总 [总数, 首个原因](用可变容器,便于 _handle 内 nonlocal 之外的累加)
+    _formula_failed_total = [0, None]
 
     def done_no(n):
         page_status[str(n)] = "done"
@@ -463,6 +471,13 @@ def _run_ocr(pdf_path, args):
         def _handle(res):
             nonlocal completed
             no = res["no"]
+            # v0.7.13: 公式失败在**主进程**汇总(逐页 stats 随 page 事件回来,
+            # worker 是独立进程,模块级累加器回不来)。
+            st = res.get("stats") or {}
+            if st.get("formula_failed"):
+                _formula_failed_total[0] += int(st["formula_failed"])
+                if not _formula_failed_total[1] and st.get("formula_first_error"):
+                    _formula_failed_total[1] = st["formula_first_error"]
             if "error" in res:
                 msg = "第 %d 页处理失败:%s" % (no, res["error"][:200])
                 failed_no(no, msg)
@@ -507,6 +522,13 @@ def _run_ocr(pdf_path, args):
     done_warnings = list(page_warnings.values())
     if fatal:
         done_warnings.append("致命错误: %s (已完成页可 --resume 接续)" % fatal)
+    # v0.7.13: 公式识别失败汇总(产物里已改为中性占位,原因在这里说明)
+    ff, first_err = _formula_failed_total
+    if ff:
+        done_warnings.append(
+            "[公式] %d 处公式未能识别(产物中以 $$[公式未识别]$$ 占位);首个原因:%s"
+            % (ff, first_err or "未知")
+        )
     _emit({"event": "done", "warnings": done_warnings})
     persist()
     return 1 if fatal else 0
