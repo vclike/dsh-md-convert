@@ -41,7 +41,13 @@ export const SAMPLE_CLASSES = [
 
 /** 单样本指标(纯函数,便于单测) */
 export function metricsOf(r, ms) {
-	const md = typeof r.md === "string" ? r.md : "";
+	// 注意:不同链路返回形状不同 —— 文字层/Office 直接回 `md` 内容,
+	// **扫描件链路只回 `outFile`(路径),不回 md**(实测:否则扫描件指标恒为 0)。
+	// 缺这一段会让扫描件基线"永远是 0 却一直通过",等于没有基线。
+	let md = typeof r.md === "string" ? r.md : "";
+	if (!md && typeof r.outFile === "string" && existsSync(r.outFile)) {
+		md = readFileSync(r.outFile, "utf8");
+	}
 	const lines = md.split("\n");
 	const sep = lines.filter((l) => /^\|\s*---/.test(l.trim())).length;
 	return {
@@ -93,7 +99,16 @@ export async function runSample(s, { workers } = {}) {
 	mkdirSync(od, { recursive: true });
 	const t0 = Date.now();
 	const r = await convertFile(p, { outDir: od, background: false, ...(workers ? { workers } : {}), ...(s.opts ?? {}) });
-	return { skip: false, metrics: metricsOf(r, Date.now() - t0) };
+	const metrics = metricsOf(r, Date.now() - t0);
+	// 防呆:ok=true 但一个字都没有 —— 几乎必然是"链路只回路径、没读到内容"这类 harness 缺陷。
+	// 绝不能把这种全 0 指标写进基线(它会永远通过,等于没有基线)。
+	if (r.ok === true && metrics.chars === 0) {
+		return {
+			skip: true,
+			reason: `产物为空但 ok=true(疑似未读到内容;返回键:${Object.keys(r).join(",")})`,
+		};
+	}
+	return { skip: false, metrics };
 }
 
 function parseArgs(argv) {
@@ -115,12 +130,25 @@ async function main() {
 	for (const s of SAMPLE_CLASSES) {
 		const inScope = targets.includes(s);
 		if (!inScope) {
-			console.log(`  ${s.cls.padEnd(14)} SKIP(慢类别,默认不跑)`);
+			// 慢类别被跳过时,**必须保留**它原有的基线项:
+			// 不带 MDC_GOLDEN_SCAN=1 跑 --write 会把扫描件基线静默删掉(实测隐患)。
+			if (write && prev?.[s.id]) {
+				out[s.id] = prev[s.id];
+				console.log(`  ${s.cls.padEnd(14)} 保留旧基线(slow,MDC_GOLDEN_SCAN=1 才能重测)`);
+			} else {
+				console.log(`  ${s.cls.padEnd(14)} SKIP(慢类别,默认不跑)`);
+			}
 			continue;
 		}
 		const res = await runSample(s);
 		if (res.skip) {
-			console.log(`  ${s.cls.padEnd(14)} SKIP(${res.reason})`);
+			// 样本缺失同理:保留旧基线,否则补回样本后基线已被清空
+			if (write && prev?.[s.id]) {
+				out[s.id] = prev[s.id];
+				console.log(`  ${s.cls.padEnd(14)} 保留旧基线(${res.reason})`);
+			} else {
+				console.log(`  ${s.cls.padEnd(14)} SKIP(${res.reason})`);
+			}
 			continue;
 		}
 		const m = res.metrics;

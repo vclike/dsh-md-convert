@@ -3,6 +3,25 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.7] - 2026-10-09
+
+### Fixed(修复)
+
+- **扫描件指标恒为 0 —— 基线形同虚设**(golden harness 缺陷,不是产品缺陷):
+  不同链路返回形状不同 —— 文字层/Office 直接回 `md` 内容,而**扫描件链路只回 `outFile`(路径)**;
+  `metricsOf()` 原先只读 `r.md` → 扫描件类别 `chars=0 anchors=0`。
+  **若不修,写进 `baseline.json` 的就是一个"永远是 0 却一直通过"的空基线,比没有基线更危险。**
+  - 修复:`metricsOf()` 在无 `md` 时从 `outFile` 读盘;并加**防呆** ——
+    `ok=true` 但 `chars=0` → 显式 SKIP 并打印返回键,**绝不写出全 0 基线**。
+  - 修复后扫描件基线:**chars=2550 anchors=4 tables=3 cjk=0‰**(4 页样本,页覆盖正确)。
+- **`--write` 会静默删掉慢类别基线**:不带 `MDC_GOLDEN_SCAN=1` 跑 `--write` 时,
+  `out` 从空对象开始 → 扫描件项被**无声删除**。现在跳过时**保留旧基线项**并打印提示。
+
+### 已知限制
+
+- 扫描件基线**默认不参与** `npm run test:golden`(耗时约 40s),需显式 `MDC_GOLDEN_SCAN=1`;
+  故扫描件退化不会拦住普通单测,只拦住带该环境变量的基线校验。
+
 ## [0.7.6] - 2026-10-09
 
 ### Fixed(修复)

@@ -11,7 +11,7 @@
 		"headings": 6,
 		"anchors": 11,
 		"qualityScore": 100,
-		"ms": 20341
+		"ms": 19121
 	},
 	"textlayer-multi-img": {
 		"ok": true,
@@ -25,7 +25,21 @@
 		"headings": 23,
 		"anchors": 9,
 		"qualityScore": 100,
-		"ms": 11517
+		"ms": 10957
+	},
+	"scan-4p": {
+		"ok": true,
+		"code": null,
+		"chain": "文字层(空) → parallel-ocr",
+		"chars": 2550,
+		"bodyChars": 2264,
+		"cjkPer1k": 0,
+		"tables": 3,
+		"tableRows": 21,
+		"headings": 12,
+		"anchors": 4,
+		"qualityScore": null,
+		"ms": 41388
 	},
 	"office-cn-table": {
 		"ok": true,
@@ -39,7 +53,7 @@
 		"headings": 4,
 		"anchors": 0,
 		"qualityScore": null,
-		"ms": 1507
+		"ms": 219
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -53,7 +67,7 @@
 		"headings": 66,
 		"anchors": 23,
 		"qualityScore": 100,
-		"ms": 3717
+		"ms": 3685
 	},
 	"gbk-text": {
 		"ok": true,
