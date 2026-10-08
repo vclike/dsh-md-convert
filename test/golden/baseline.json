@@ -11,7 +11,10 @@
 		"headings": 6,
 		"anchors": 11,
 		"qualityScore": 100,
-		"ms": 19121
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 20154
 	},
 	"textlayer-multi-img": {
 		"ok": true,
@@ -25,7 +28,10 @@
 		"headings": 23,
 		"anchors": 9,
 		"qualityScore": 100,
-		"ms": 10957
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 10652
 	},
 	"scan-4p": {
 		"ok": true,
@@ -39,7 +45,10 @@
 		"headings": 12,
 		"anchors": 4,
 		"qualityScore": null,
-		"ms": 41388
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 41084
 	},
 	"office-cn-table": {
 		"ok": true,
@@ -53,7 +62,10 @@
 		"headings": 4,
 		"anchors": 0,
 		"qualityScore": null,
-		"ms": 219
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 216
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -67,7 +79,10 @@
 		"headings": 66,
 		"anchors": 23,
 		"qualityScore": 100,
-		"ms": 3685
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 3768
 	},
 	"gbk-text": {
 		"ok": true,
@@ -81,6 +96,9 @@
 		"headings": 1,
 		"anchors": 0,
 		"qualityScore": null,
-		"ms": 24
+		"wraps": 2,
+		"wrapPer100": 50,
+		"badTableRows": 0,
+		"ms": 21
 	}
 }

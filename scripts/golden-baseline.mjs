@@ -39,6 +39,128 @@ export const SAMPLE_CLASSES = [
 	{ id: "gbk-text", file: "gbk-text.txt", cls: "⑥GBK 文本", light: true },
 ];
 
+/**
+ * 归一化编辑距离(Edit_dist),零依赖实现。
+ *
+ * 用途:现有基线只有"字符数 ≥ 基线 97%"这种粗判据 —— 一次大规模**重排/丢段**
+ * 完全可能在字符数不掉的情况下混过去。本指标把"产物与基线的差异"变成一个可比数值。
+ *
+ * 做法:先剥公共前后缀(绝大多数情况只差一小段),再对中间做 Levenshtein DP。
+ * 长度上限保护:超过 MDC_EDIT_MAX 字符则退化为"行级集合 Jaccard",避免 O(n²) 卡死。
+ */
+export function editDistance(a, b, max = 40000) {
+	const s = String(a ?? "");
+	const t = String(b ?? "");
+	if (s === t) return { dist: 0, norm: 0, mode: "exact" };
+	if (!s.length || !t.length) return { dist: Math.max(s.length, t.length), norm: 1, mode: "exact" };
+	// 公共前后缀
+	let p = 0;
+	const maxP = Math.min(s.length, t.length);
+	while (p < maxP && s[p] === t[p]) p++;
+	let e = 0;
+	const maxE = Math.min(s.length - p, t.length - p);
+	while (e < maxE && s[s.length - 1 - e] === t[t.length - 1 - e]) e++;
+	const mid1 = s.slice(p, s.length - e);
+	const mid2 = t.slice(p, t.length - e);
+	if (!mid1.length || !mid2.length) {
+		const d = mid1.length + mid2.length;
+		return { dist: d, norm: Math.round((d / Math.max(s.length, t.length)) * 10000) / 10000, mode: "exact" };
+	}
+	if (mid1.length * mid2.length > max * max) {
+		// 过大 → 行级 Jaccard 近似(足以发现"丢段/重排",不追求精确编辑距离)
+		const setA = new Set(mid1.split("\n").map((x) => x.trim()).filter(Boolean));
+		const setB = new Set(mid2.split("\n").map((x) => x.trim()).filter(Boolean));
+		let inter = 0;
+		for (const x of setA) if (setB.has(x)) inter++;
+		const union = new Set([...setA, ...setB]).size;
+		const sim = union ? inter / union : 1;
+		return { dist: null, norm: Math.round((1 - sim) * 10000) / 10000, mode: "jaccard" };
+	}
+	// Levenshtein DP(滚动数组)
+	const m = mid1.length;
+	const n = mid2.length;
+	let prev = new Array(n + 1);
+	let cur = new Array(n + 1);
+	for (let j = 0; j <= n; j++) prev[j] = j;
+	for (let i = 1; i <= m; i++) {
+		cur[0] = i;
+		const c1 = mid1.charCodeAt(i - 1);
+		for (let j = 1; j <= n; j++) {
+			const cost = c1 === mid2.charCodeAt(j - 1) ? 0 : 1;
+			cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+		}
+		const t2 = prev;
+		prev = cur;
+		cur = t2;
+	}
+	const d = prev[n];
+	return { dist: d, norm: Math.round((d / Math.max(s.length, t.length)) * 10000) / 10000, mode: "exact" };
+}
+
+/**
+ * 断行率(可观测指标):段内硬换行把中文词切开的处数 / 正文行数。
+ * 这是 v0.7.6 修复的缺陷类型,必须有量化指标兜底,否则将来会静默回归。
+ *
+ * ⚠️ 已知局限(实测,不是猜测):本指标**只从 md 文本判断**,无法区分
+ *   "OCR 按栏宽硬换行切开" 与 "源文件本来就是分行排版"。
+ *   例:gbk-text 样本(纯文本,源文件本就分 4 行)实测 wraps=2,而它的转换输出**完全正确**。
+ *   所以 wraps 只能在**同一份样本的多次运行之间**做回归对比(基线 vs 现状),
+ *   **不能**跨文档比较、也不能当作"绝对质量分"。0.7.6 的修复效果正是在
+ *   97 页真实扫描件上用同样的判据测得 415 → 0。
+ */
+export function wrapStats(md) {
+	const text = String(md ?? "");
+	const lines = text.split("\n");
+	const cjkEnd = /[㐀-䶿一-鿿豈-﫿]$/;
+	const cjkStart = /^[㐀-䶿一-鿿豈-﫿]/;
+	const term = /[。！？；：、，,．.!?;:]$/;
+	const struct = /^\s*(\||#{1,6}\s|>|<!-|[-*+]\s|[-=*_]{3,}\s*$)/;
+	let wraps = 0;
+	let body = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const t = lines[i].trim();
+		if (!t || t.startsWith("<!--") || t.startsWith("|") || t.startsWith("#")) continue;
+		body++;
+		if (i === lines.length - 1) continue;
+		const nx = lines[i + 1].trim();
+		if (!nx || struct.test(lines[i]) || struct.test(lines[i + 1])) continue;
+		if (cjkEnd.test(t) && cjkStart.test(nx) && !term.test(t)) wraps++;
+	}
+	return { wraps, bodyLines: body, per100: body ? Math.round((wraps * 10000) / body) / 100 : 0 };
+}
+
+/**
+ * 表格结构一致性:统计"单元格数与表头不一致"的表格数据行。
+ * 列序/列数错乱是扫描件链路的已知痛点(几何装配),这个指标能在退化时立刻报警。
+ */
+export function tableStats(md) {
+	const lines = String(md ?? "").split("\n");
+	let tables = 0;
+	let rows = 0;
+	let badRows = 0;
+	let headerCols = null;
+	const flush = () => {
+		headerCols = null;
+	};
+	for (const raw of lines) {
+		const l = raw.trim();
+		if (!l.startsWith("|")) {
+			flush();
+			continue;
+		}
+		const cells = l.split("|").length - 2;
+		if (/^\|[\s:-]+\|[\s:|-]*$/.test(l)) continue; // 分隔行
+		if (headerCols === null) {
+			tables++;
+			headerCols = cells;
+			continue;
+		}
+		rows++;
+		if (cells !== headerCols) badRows++;
+	}
+	return { tables, rows, badRows };
+}
+
 /** 单样本指标(纯函数,便于单测) */
 export function metricsOf(r, ms) {
 	// 注意:不同链路返回形状不同 —— 文字层/Office 直接回 `md` 内容,
@@ -50,6 +172,9 @@ export function metricsOf(r, ms) {
 	}
 	const lines = md.split("\n");
 	const sep = lines.filter((l) => /^\|\s*---/.test(l.trim())).length;
+	// W0-4 零依赖指标(2026-10-09):断行率 + 表结构一致性
+	const wrap = wrapStats(md);
+	const tstat = tableStats(md);
 	return {
 		ok: r.ok === true,
 		code: r.code ?? null,
@@ -62,6 +187,10 @@ export function metricsOf(r, ms) {
 		headings: lines.filter((l) => /^#{1,6} /.test(l)).length,
 		anchors: (md.match(/<!--PAGE:\d+-->/g) ?? []).length,
 		qualityScore: typeof r.quality?.score === "number" ? r.quality.score : null,
+		// 缺陷指标:越低越好
+		wraps: wrap.wraps,
+		wrapPer100: wrap.per100,
+		badTableRows: tstat.badRows,
 		ms: Math.round(ms),
 	};
 }
@@ -87,6 +216,17 @@ export function compareSample(base, cur, id) {
 		issues.push(`质量分下降:${base.qualityScore} → ${cur.qualityScore}`);
 	}
 	if (base.ms > 0 && cur.ms > base.ms * 2) warnings.push(`耗时 ${base.ms}ms → ${cur.ms}ms(>2×,仅告警)`);
+	// W0-4 零依赖指标(缺陷指标:只许不增)
+	if (typeof base.wraps === "number" && typeof cur.wraps === "number" && cur.wraps > base.wraps) {
+		issues.push(`段内硬换行增加:${base.wraps} → ${cur.wraps}(v0.7.6 的修复被回退)`);
+	}
+	if (
+		typeof base.badTableRows === "number" &&
+		typeof cur.badTableRows === "number" &&
+		cur.badTableRows > base.badTableRows
+	) {
+		issues.push(`表格列数不一致的行增加:${base.badTableRows} → ${cur.badTableRows}(列序/列数错乱)`);
+	}
 	return { id, ok: issues.length === 0, issues, warnings };
 }
 
