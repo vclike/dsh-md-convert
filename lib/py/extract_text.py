@@ -73,6 +73,15 @@ CHAR_REBUILD_MIN_RATIO = 0.90
 # 与 _char_rebuild_lines 同一字符数上限(保证比值口径一致)
 CHAR_REBUILD_MAX_CHARS = 50000
 
+# 同一 y 带内按字高拆分"桥接高字"的判据(v0.7.2 W1-6)
+#   逐字符页的 y 聚类条件是"垂直重叠即同行",高大的装饰英文标题会与中文标题
+#   被传递桥接成一行,再按 x 排序就逐字交错(实测 p2 'REIM招AGI标NING概POS述SIB：ILITIES')。
+#   拆点取"唯一字高降序相邻比值的最大间隙",并要求高字一侧是少数 —— 只有这种
+#   "少数高字桥接多数小字"的形态才是缺陷;正文行尾的小字号标点(实测 h=1.5 混 11.9)
+#   因高字一侧是多数而不拆。
+CHAR_ROW_SPLIT_RATIO = 1.5
+CHAR_ROW_SPLIT_MAX_MINORITY = 0.4
+
 
 def _utf8_stdio():
     """Windows 管道默认 GBK,JSON 输出强制 UTF-8。"""
@@ -101,6 +110,35 @@ def _page_lines(tp):
         return lines or None
     except Exception:
         return None
+
+
+def _split_row_by_size(row):
+    """把"少数高字桥接"的 y 带按字高拆成多个子行(v0.7.2 W1-6)。
+
+    返回子行列表(高字在前);无桥接形态时原样返回 [row]。
+    判据见 CHAR_ROW_SPLIT_RATIO / CHAR_ROW_SPLIT_MAX_MINORITY 注释。
+    """
+    if len(row) < 3:
+        return [row]
+    height_of = lambda c: round(c[6] - c[5], 1)  # noqa: E731
+    heights = sorted({height_of(c) for c in row if c[6] > c[5]}, reverse=True)
+    if len(heights) < 2:
+        return [row]
+    best_i, best_gap = -1, 0.0
+    for i in range(len(heights) - 1):
+        if heights[i + 1] <= 0:
+            continue
+        gap = heights[i] / heights[i + 1]
+        if gap > best_gap:
+            best_gap, best_i = gap, i
+    if best_i < 0 or best_gap < CHAR_ROW_SPLIT_RATIO:
+        return [row]
+    cut = heights[best_i]
+    tall = [c for c in row if height_of(c) >= cut]
+    rest = [c for c in row if height_of(c) < cut]
+    if not tall or not rest or len(tall) > CHAR_ROW_SPLIT_MAX_MINORITY * len(row):
+        return [row]
+    return [tall] + _split_row_by_size(rest)
 
 
 def _char_rebuild_lines(tp):
@@ -144,8 +182,13 @@ def _char_rebuild_lines(tp):
             cur_hi, cur_lo = t, b
     rows.append(cur)
     # 行内拼接(x 升序;间隙 > max(2.5pt, 0.45×前字宽) 还原词界)
+    # v0.7.2 W1-6: 先按字高拆掉"少数高字桥接"(装饰英文标题与中文标题重叠于同一 y 带),
+    # 否则两种文本流会被 x 排序逐字交错。
     out = []
+    sized_rows = []
     for row in rows:
+        sized_rows.extend(_split_row_by_size(row))
+    for row in sized_rows:
         row.sort(key=lambda c: c[3])
         buf = ""
         prev_r = None
@@ -456,6 +499,7 @@ def main():
         "orphan_merged": 0, "orphan_dropped": 0, "headings": 0, "body_height": 0.0,
         "tables_rebuilt": 0, "char_rebuilt_pages": 0,
         "char_rebuild_rejected_pages": 0,
+        "strip_protected_pages": 0,
     }
     pages_meta = []
     raw_pages = []  # [(no, page, tp, lines)]
@@ -511,14 +555,24 @@ def main():
                 tables = []
         notes["tables_rebuilt"] = notes.get("tables_rebuilt", 0) + len(tables)
         kept = []
+        strip_dropped_here = 0
         for b, t, txt in lines:
             cy = (b + t) / 2.0
             if tables and any(t_top >= cy >= t_bot for (t_top, t_bot, _md) in tables):
                 continue  # 表格区域内文本,由 md 表格块替代
             if _norm(txt) in strip_set:
-                notes["stripped_lines"] += 1
+                strip_dropped_here += 1
                 continue
             kept.append((b, t, txt))
+        # v0.7.2 W1-7: 页眉页脚剥离不得清空整页。
+        # 实证(鹏瑞利 brief / 2026-10-08): 装饰英文标题在每页重复出现,被判为重复页眉而剥离;
+        # 封面页 p1 的**唯一**内容就是该标题 → 整页被剥空(内容静默丢失)。
+        # 不变量: 剥离后若本页既无留存行也无表格块,则撤销本页剥离,并计数以便观测。
+        if not kept and not tables and strip_dropped_here:
+            kept = list(lines)
+            notes["strip_protected_pages"] = notes.get("strip_protected_pages", 0) + 1
+        else:
+            notes["stripped_lines"] += strip_dropped_here
         kept, merged, dropped = _merge_orphans(kept)
         notes["orphan_merged"] += merged
         notes["orphan_dropped"] += dropped
