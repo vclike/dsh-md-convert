@@ -89,3 +89,19 @@ test("质量⑤: 无表格纯长文 → score=100", () => {
 	assert.equal(r.suggestVision, false);
 	assert.equal(r.signals.tableRows, 0);
 });
+
+test("质量⑥(W2-2): 中文行间空格注入只观测 —— 计入 signals 但不改 score/闸门", () => {
+	// 注入形态(pymupdf4llm span 拼接产物):中文行间被插单个半角空格
+	const injected = Array.from({ length: 10 }, (_, i) => `这是第 ${i} 段落 入 中文 空格 的正文内容,用于填充行。`).join("\n");
+	const ri = assessMdQuality(injected);
+	assert.ok(ri.signals.cjkSpaceInjection > 0, JSON.stringify(ri.signals));
+	assert.ok(ri.signals.cjkSpacePer1k > 0, JSON.stringify(ri.signals));
+	// 同一文本去掉注入空格 → 信号归零,而 score 不变(证明只观测、不参与评分)
+	const clean = injected.replace(/(?<=[\u4e00-\u9fff]) (?=[\u4e00-\u9fff])/g, "");
+	const rc = assessMdQuality(clean);
+	assert.equal(rc.signals.cjkSpaceInjection, 0);
+	assert.equal(ri.score, rc.score, "注入空格不得改变 score(仅观测字段)");
+	assert.equal(ri.suggestVision, rc.suggestVision, "注入空格不得改变闸门");
+	// 数字被单空格打散 → 观测计数(R4 只观测不修改)
+	assert.ok(assessMdQuality("拦标价 1 9 4 , 0 0 0元").signals.tornDigitRuns >= 1);
+});
