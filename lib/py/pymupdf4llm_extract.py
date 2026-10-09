@@ -195,6 +195,20 @@ def main():
         _i = sys.argv.index("--pages")
         if _i + 1 < len(sys.argv):
             pages_spec = sys.argv[_i + 1]
+    # v1.0.5: OCR 分辨率(可选)。不传 → 沿用库默认(**不改变既有行为**)。
+    # 实测真实样本:100 相对默认省 26~32% 墙钟,数字串零丢失;故做成可调项而非改默认。
+    ocr_dpi = None
+    if "--ocr-dpi" in sys.argv:
+        _i = sys.argv.index("--ocr-dpi")
+        if _i + 1 < len(sys.argv):
+            try:
+                _d = int(sys.argv[_i + 1])
+                if _d > 0:
+                    ocr_dpi = _d
+            except ValueError:
+                sys.stdout = real_stdout
+                print(json.dumps({"ok": False, "error": f"--ocr-dpi 需为正整数: {sys.argv[_i + 1]!r}"}, ensure_ascii=False))
+                return 1
     try:
         import pymupdf4llm
     except Exception as e:
@@ -220,7 +234,10 @@ def main():
         hf_strip = {} if os.environ.get("MDC_NO_HF_STRIP") else _detect_hf(doc, page_idxs)
         doc.close()
         # page_chunks=True: 逐页 chunk → 自行包 <!--PAGE:NN--> 锚点(与自研链协议一致)
-        chunks = pymupdf4llm.to_markdown(pdf, page_chunks=True, pages=pages_arg)
+        _kw = {}
+        if ocr_dpi is not None:
+            _kw["ocr_dpi"] = ocr_dpi
+        chunks = pymupdf4llm.to_markdown(pdf, page_chunks=True, pages=pages_arg, **_kw)
         # 锚点必须用**原始页号**:子集提取时 enumerate 会把第 5 页错编成 01
         nos = pages_arg if pages_arg is not None else list(range(total))
         if pages_arg is not None and len(chunks) != len(nos):
