@@ -74,51 +74,51 @@ def _zone_texts(doc, page_idx):
 
 
 def _detect_hf(doc, page_idxs):
-    """跨页页眉/页脚判定 → 待剥离的归一化文本集合。
+    """跨页页眉/页脚判定 → {页号: 该页待剥离的归一化文本集合}。
 
     判据(与自研链一致):
       ① 边距带内**跨页重复** ≥ max(2, ceil(0.6N));或
       ② 边距带内命中页码/版权正则(出现 ≥1 次即剥)。
-    **额外保守条件**:该文本若**也在正文区独立成行**,则不剥 ——
-    宁可漏剥,不可误杀正文(这是本模块与自研链唯一的差异:
-    自研链在坐标层直接删行,这里只能在文本层按行匹配,必须更保守)。
+    保守条件:只在该页边距带有该文本、**且该页正文区无同名行**时才剥该页 ——
+    绝不误杀正文(自研链在坐标层直接删行,这里只能在文本层按行匹配,必须更保守)。
 
-    ⚠️ **已知局限(有意保留,不要"修"掉它)**:
-    与正文同名的页眉**剥不掉**。实测 textlayer-multi-img 的页眉 "Agent 进化"
-    在正文区也作为标题独立成行 —— 文本层无法区分"哪一次出现是页眉"(没有坐标),
-    若去掉这条保守条件就会**删掉真实标题**。故此条件必须保留;
-    要彻底解决需在坐标层逐行判定(即自研链的做法)。
+    ⚠️ **v1.1 起改为逐页判定**(此前是全局判定,过度保守):
+    全局版的条件是"该文本在**任意页**的正文区出现过就全不剥"。实测火山方舟 16 页文档:
+    「专业数据集」在边距带 **29 次**、正文区仅 **2 次**(p1 封面标题、p3 目录项),
+    于是 **29 处真页眉因 2 处正文同名而被全部放过** —— 这就是"一处风险否决全部收益"。
+    改为**逐页**:某页边距带有该文本**且该页正文区没有** → 只剥该页。
+    效果:p1 本就无页眉不剥、p3 因正文同名跳过(保留 1 处噪音)、其余 **28 处照剥**。
+    仍然保守(绝不误杀),只是不再让个别页的正文牵连其它页的页眉。
     """
-    strip = set()
-    zones = []  # [(zone_set, body_set)]
-    for i in page_idxs:
-        zones.append(_zone_texts(doc, i))
-    usable = [z for z in zones if z[0]]
-    if not usable:
-        return strip
-    n_pages = len(usable)
-    threshold = max(2, int(math.ceil(n_pages * REPEAT_RATIO)))
     from collections import Counter
 
+    zones = {}  # {page_idx: (zone_set, body_set)}
+    for i in page_idxs:
+        zones[i] = _zone_texts(doc, i)
+    usable = [(i, z, b) for i, (z, b) in zones.items() if z]
+    if not usable:
+        return {}
+    n_pages = len(usable)
+    threshold = max(2, int(math.ceil(n_pages * REPEAT_RATIO)))
+
     freq = Counter()
-    for z, _b in usable:
+    for _i, z, _b in usable:
         for k in z:
             freq[k] += 1
     candidates = {k for k, c in freq.items() if c >= threshold}
     # ② 正则候选(边距带内命中即剥)
-    for z, _b in usable:
+    for _i, z, _b in usable:
         for k in z:
             if ZONE_LINE_PAT.match(k):
                 candidates.add(k)
-    # 额外保守条件:正文区独立成行者不剥
-    body_all = set()
-    for _z, b in usable:
-        body_all |= b
-    for k in candidates:
-        if k in body_all:
-            continue
-        strip.add(k)
-    return strip
+
+    # 逐页收口:该页边距带有、该页正文区没有 → 只剥该页
+    per_page = {}
+    for i, z, b in usable:
+        s = {k for k in candidates if k in z and k not in b}
+        if s:
+            per_page[i] = s
+    return per_page
 
 
 def _strip_hf_from_md(page_text, strip_set):
@@ -206,7 +206,7 @@ def main():
         # v1.0.2: 页眉/页脚检测必须在 **doc.close() 之前**(需要坐标)
         # MDC_NO_HF_STRIP=1 可关闭剥离(逃生开关 + A/B 对照验证用)
         page_idxs = pages_arg if pages_arg is not None else list(range(total))
-        hf_strip = set() if os.environ.get("MDC_NO_HF_STRIP") else _detect_hf(doc, page_idxs)
+        hf_strip = {} if os.environ.get("MDC_NO_HF_STRIP") else _detect_hf(doc, page_idxs)
         doc.close()
         # page_chunks=True: 逐页 chunk → 自行包 <!--PAGE:NN--> 锚点(与自研链协议一致)
         chunks = pymupdf4llm.to_markdown(pdf, page_chunks=True, pages=pages_arg)
@@ -219,11 +219,16 @@ def main():
             return 1
         parts = []
         hf_removed = 0
+        hf_patterns_seen = set()
         for idx, c in enumerate(chunks):
             real = (nos[idx] + 1) if idx < len(nos) else (idx + 1)
             text = (c.get("text") or "").strip()
             # v1.0.2: 逐页剥离页眉/页脚(必须在包锚点**之前**,只动本页内容)
-            text, rm = _strip_hf_from_md(text, hf_strip)
+            # 逐页取对应页的待剥集合(检测已按页收口)
+            page_no = nos[idx] if idx < len(nos) else idx
+            this_strip = hf_strip.get(page_no, set())
+            hf_patterns_seen |= this_strip
+            text, rm = _strip_hf_from_md(text, this_strip)
             hf_removed += rm
             parts.append(f"<!--PAGE:{real:02d}-->\n\n{text}\n\n<!--/PAGE:{real:02d}-->")
         md = "\n\n".join(parts)
@@ -236,7 +241,8 @@ def main():
             "total_pages": total,
             "chars": len(md),
             "hf_stripped": hf_removed,
-            "hf_patterns": sorted(hf_strip)[:12],
+            "hf_pages": len(hf_strip),
+            "hf_patterns": sorted(hf_patterns_seen)[:12],
         }
         sys.stdout = real_stdout
         print(json.dumps({"ok": True, "md": md, "notes": notes}, ensure_ascii=False))

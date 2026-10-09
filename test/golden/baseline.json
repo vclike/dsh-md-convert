@@ -14,14 +14,14 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 17094
+		"ms": 19931
 	},
 	"textlayer-multi-img": {
 		"ok": true,
 		"code": null,
 		"chain": "pymupdf4llm(段落合并直提)",
-		"chars": 6659,
-		"bodyChars": 5707,
+		"chars": 6499,
+		"bodyChars": 5596,
 		"cjkPer1k": 0,
 		"tables": 2,
 		"tableRows": 15,
@@ -31,7 +31,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 10091
+		"ms": 11794
 	},
 	"scan-4p": {
 		"ok": true,
@@ -65,7 +65,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 1570
+		"ms": 1525
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -82,7 +82,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 3576
+		"ms": 3601
 	},
 	"gbk-text": {
 		"ok": true,
@@ -116,7 +116,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 122
+		"ms": 115
 	},
 	"pdf-crosspage-table": {
 		"ok": true,
@@ -133,7 +133,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 2923
+		"ms": 2756
 	},
 	"dl-word-tables": {
 		"ok": true,
@@ -167,7 +167,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 3,
-		"ms": 32
+		"ms": 34
 	},
 	"dl-lists": {
 		"ok": true,
@@ -184,7 +184,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 41
+		"ms": 50
 	},
 	"dl-headers": {
 		"ok": true,
@@ -201,7 +201,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 29
+		"ms": 35
 	},
 	"dl-hdrftr-firstpage": {
 		"ok": true,
@@ -218,7 +218,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 54
+		"ms": 50
 	},
 	"dl-eastasian-num": {
 		"ok": true,
@@ -235,7 +235,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 57
+		"ms": 54
 	},
 	"dl-word-sample": {
 		"ok": true,
@@ -252,7 +252,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 47
+		"ms": 43
 	},
 	"dl-pdf-4p": {
 		"ok": true,
@@ -269,7 +269,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 556
+		"ms": 551
 	},
 	"dl-pdf-multipage": {
 		"ok": true,
@@ -286,7 +286,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 484
+		"ms": 491
 	},
 	"dl-pdf-table-as-img": {
 		"ok": true,
@@ -303,7 +303,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 407
+		"ms": 441
 	},
 	"dl-pdf-code-formula": {
 		"ok": true,
@@ -320,7 +320,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 450
+		"ms": 444
 	},
 	"zh-omnidocbench": {
 		"ok": true,
