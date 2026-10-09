@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeBatchesForPages, normalizeOnlyPages, makeVisionBrief, buildFigureList, renderTemplate } from "../lib/core/vision.js";
-import { visionHintsFromPages, visionHintMessage } from "../lib/core/convert.js";
+import { visionHintsFromPages, visionHintMessage, injectImages } from "../lib/core/convert.js";
 import { assemblePlan } from "../lib/core/assemble.js";
 
 /* ---------------- normalizeOnlyPages ---------------- */
@@ -74,6 +74,27 @@ test("renderTemplate: 内置模板严格模式缺变量抛错;自定义模板保
 	// 宽松(用户自定义模板):既有契约 —— 缺失变量替换为空串,不炸。
 	assert.equal(renderTemplate("a {{CUSTOM}} b", {}), "a  b");
 	assert.equal(renderTemplate("A={{BATCH_ID}} C={{MISSING}}", { BATCH_ID: "b" }), "A=b C=");
+});
+
+/* ---------------- injectImages(v0.7.16) ---------------- */
+
+test("injectImages: 图片插进对应页锚点块内,且不破坏锚点", () => {
+	const md = ["<!--PAGE:01-->", "正文一", "<!--/PAGE:01-->", "", "<!--PAGE:02-->", "正文二", "<!--/PAGE:02-->"].join("\n");
+	const out = injectImages(md, [{ no: 2, images: [{ file: "images/p002_01.png", page: 2 }] }]);
+	assert.match(out, /正文二\s*!\[第 2 页插图\]\(images\/p002_01\.png\)/);
+	// 关键:锚点闭合标签必须仍在图片之后(否则块结构被破坏 → 装配会错位)
+	assert.match(out, /images\/p002_01\.png\)[\s\S]*<!--\/PAGE:02-->/);
+	// 未指定的页不得被污染
+	assert.doesNotMatch(out.slice(0, out.indexOf("PAGE:02")), /images\//);
+});
+
+test("injectImages: 幂等(重复调用不叠加)+ 无图/无锚点安全", () => {
+	const md = "<!--PAGE:01-->\n正文\n<!--/PAGE:01-->";
+	const pages = [{ no: 1, images: [{ file: "images/p001_01.png", page: 1 }] }];
+	const once = injectImages(md, pages);
+	assert.equal(injectImages(once, pages), once, "第二次注入应无变化");
+	assert.equal(injectImages(md, []), md);
+	assert.equal(injectImages(md, [{ no: 9, images: [{ file: "images/x.png", page: 9 }] }]), md, "锚点不存在时应安全跳过");
 });
 
 /* ---------------- visionHints ---------------- */

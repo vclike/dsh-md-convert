@@ -324,6 +324,8 @@ def _extract_page_images(page, no, out_dir, min_area, max_area, scale=2.0):
             img.crop((x0, y_top, x1, y_bot)).save(os.path.join(out_dir, fname))
             out.append({
                 "file": "%s/%s" % (os.path.basename(out_dir.rstrip("/\\")), fname),
+                # page 供下游生成替代文字(如"第3页插图");缺了会渲染成"第页插图"
+                "page": no,
                 "areaRatio": ar,
                 "x": b["x0"], "y": b["y1"], "w": b["x1"] - b["x0"], "h": b["y1"] - b["y0"],
             })
