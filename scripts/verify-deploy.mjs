@@ -22,7 +22,20 @@ if (!existsSync(TGZ)) {
 }
 
 // ── ① 关键文件哈希三方比对 ──
-const KEY = ["lib/core/crosspage.js", "lib/core/cjk.js", "lib/core/convert.js", "package.json"];
+// ⚠️ 必须包含 **python 文件** —— 第一版只比对了 js,于是漏掉了真实事故:
+// 改动 `lib/py/pymupdf4llm_extract.py` 后重新打包,但 tgz **文件名没变**
+// (仍叫 dsh-md-convert-1.0.2.tgz),pnpm 认为 spec 未变**跳过重装**,
+// 安装副本仍是旧 python → 新功能完全不生效,而校验器却报"三方一致"。
+// 教训有两层:① 校验范围要覆盖**所有**会变的文件类型(不能只盯 js);
+//            ② 内容变更就该 bump 版本(tgz 文件名随之变化,pnpm 才会重装)。
+const KEY = [
+	"lib/core/crosspage.js",
+	"lib/core/cjk.js",
+	"lib/core/convert.js",
+	"lib/py/pymupdf4llm_extract.py",
+	"lib/py/extract_text.py",
+	"package.json",
+];
 const h = (p) => (existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 12) : "缺失");
 console.log("=== 三方一致(dev / tgz / 安装副本) ===");
 console.log("文件".padEnd(26) + "dev".padStart(14) + "tgz".padStart(14) + "desktop".padStart(14) + "web".padStart(14));
