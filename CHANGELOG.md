@@ -3,6 +3,63 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.16] - 2026-10-09
+
+### Added(新增能力)
+
+- **文中插图进 md**(此前 `extractImages: false`,图片根本没被提取)。
+  - `extract_text.py` 新增 `_page_img_blocks()`:原 `_page_img_ratio()` 只累加面积、
+    **丢弃图块坐标**;现同时返回坐标,占比口径不变(visionHints 不受影响)。
+  - 新增 `--extract-images <dir>` / `--image-min-area`(默认 0.02)/
+    `--image-max-area`(默认 0.90)三个开关。
+  - **双面积闸是实测得出的**:扫描件 PDF **每页就是一张整页大图**
+    (实测 97 页**全部** areaRatio=1.0),抽出来等于复制原页面 → 上闸拦掉;
+    分隔线/logo 等装饰件面积过小 → 下闸拦掉;只有介于两者之间的才是真正的文中插图。
+  - `convert.js` 新增纯函数 `injectImages()`:把插图插进**对应页锚点块内**,
+    md 里用 `![第 N 页插图](images/pNNN_XX.png)`(B1 相对路径,目录锚定到产物输出目录)。
+- **多 agent 并发 vision 编排**。
+  - `plan.json` 新增 `orchestration` 块,并**写进工具结果文本** ——
+    只有回给宿主 agent 的内容才会被执行,只写在 plan 里等人去读则并发永远不会发生。
+  - 架构约束:插件**无法自行派生子 agent**(无 spawn/delegate 能力),
+    并发由宿主 agent 执行,与 Deep Research / agent team 同一机制。
+- **提示词图片规则**(vision-ocr.md)。
+  - 按"有没有信息量"二分:有信息量的图用相对路径引用 + 必须写简述(替代文字);
+    装饰性图件只写 `<!-- 装饰性图件已省略 -->` 不引用文件;
+    **图里是表格或文字的一律转写成 Markdown 表格/文字**,绝不整块当图片跳过。
+  - 新增 `{{FIGURE_FILES}}` 变量,注入本批**真实存在**的插图候选(页号过滤),
+    杜绝模型臆造图片路径。
+  - 新增"批次自足"章节 + 扩充自检清单:禁止跨批补写、禁止"接上页/续"衔接语。
+  - **修正跨页表格规则**:原模板要求加 `<!-- 表格跨页,未完 -->`,而装配按锚点合并,
+    这类注释会留在成品里像缺陷 → 改为各页照常转写可见部分 + 表头行每页重复。
+
+### Changed(变更)
+
+- `vision.pagesThreshold` 默认 `0 → 30`,并附**语义澄清注释**:
+  这**不是性能阈值**。实测本地 OCR 5.9s/页、vision 并发 3 路仍 ~15s/页,
+  且 `T_vis < T_local ⟺ V/C < L` **与页数无关** —— 时间从不构成换轨理由。
+  真正依据是宿主 `ocr.foregroundMaxPages=30` 的前台作业门槛。
+  换轨仍需 `complexityRatio(40%)` 联合把关,纯文字长文档不会被盲目送去 vision。
+- 新增配置:`vision.model`(默认"",空=跟随宿主)、`vision.maxConcurrency`(默认 3)、
+  `vision.imageMode`(默认 `embed`)、`vision.imageMinArea`(0.02)、`vision.imageMaxArea`(0.90)。
+- `renderTemplate(template, vars, {strict})`:内置模板走 **strict**(变量漏传抛错,
+  避免残缺提示词静默发给转写 agent);**自定义模板保持宽松**(既有契约,缺失变量→空串)。
+
+### Fixed(修复)
+
+- `textlayer.js` 返回时**重建** pages 对象、只保留 `{no,imgRatio}`,把 python 透出的
+  `images`/`img_blocks` 全丢了 —— 表现为"抽图成功但 md 里没有图"。
+- `convert.js` 文字层调用点**未透传 `vision` 配置**,导致 `imageMode` 恒为空、功能静默失效;
+  且插图目录未锚定到产物目录。
+- `extract_text.py` 缺 `import os`(新增抽图路径必然 NameError);误用不存在的 `args.ocr_scale`。
+
+### 验证
+
+- 端到端(真实并发跑 2 个子 agent,4 页韩文简报):
+  两批锚点各自对齐 `[01,02]` / `[03,04]`;装配 `coverage 4/4`、`findings 0`;
+  标题层级正确、`[표 1]` 转成 Markdown 管道表格、装饰图件记为省略注释、
+  **无残留模板变量 / 无开场白 / 无跨批衔接语**;批次交界无断裂。
+- `node --test` 185/185;`test:py` 全 PASS;golden 18 类无退化。
+
 ## [0.7.15] - 2026-10-09
 
 ### Fixed(修复)

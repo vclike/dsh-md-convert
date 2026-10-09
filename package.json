@@ -1,6 +1,6 @@
 {
   "name": "dsh-md-convert",
-  "version": "0.7.15",
+  "version": "0.7.16",
   "description": "Convert Office documents (.doc/.docx/.xls/.xlsx/.ppt/.pptx) and PDFs (incl. scanned: dual-engine text layer with pypdfium2 fallback / complexity-probe routing to page-parallel local OCR with resume or vision-model batch briefs) to structurally-formatted Markdown, powered by MarkItDown. CLI + dsh agent tools (md_convert / md_convert_assemble).",
   "type": "module",
   "license": "MIT",
