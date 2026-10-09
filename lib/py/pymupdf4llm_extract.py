@@ -11,10 +11,128 @@ dsh-md-convert — PyMuPDF4LLM 文字层提取桥(v0.6.14)
 """
 import io
 import json
+import math
+import os
 import re
 import sys
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+# ─── v1.0.2 页眉/页脚剥离 ────────────────────────────────────────────────
+# 为什么需要:pymupdf4llm 链路**没有**页眉页脚处理,实测 golden 18 类中有 4 类
+# 把页眉混进正文(textlayer-multi-img 的 "Agent 进化"×8、pdf-crosspage-table 的
+# "专业数据集"×3、char-layer 的 "鹏瑞利广场"×3、dl-pdf-4p 的 "이슈와 논점"×3),
+# 另有页码行残留。自研链早有这套逻辑(extract_text.py 的 _detect_headers_footers),
+# 但它是**基于 pdfium 坐标**的,而这里只有 md 文本 —— 故本模块用 pymupdf 坐标
+# 独立复算一次,判据与自研链**同源**(同一 MARGIN_RATIO / REPEAT_RATIO / 正则),
+# 保证"自研链会剥的,这里也会剥"。
+#
+# 有意重复常量而不从 extract_text.py import:后者的注释已说明本脚本的定位是
+# "只装 pymupdf4llm 也能用"的可选引擎,模块级 import pypdfium2 会破坏这个前提。
+MARGIN_RATIO = 0.12  # 页眉/页脚边距带占页高比例
+REPEAT_RATIO = 0.6  # 同带内跨页重复阈值:max(2, ceil(0.6 × 有效页数))
+ZONE_LINE_PAT = re.compile(
+    r"^(?:版权所有©?.*|\d+(?:\s*/\s*\d+)?|第\s*\d+\s*页(?:.*共\s*\d+\s*页)?|Powered by .+)$"
+)
+
+
+def _norm(text):
+    """归一化用于跨页重复比较(去全部空白差异)——与自研链同一实现。"""
+    return re.sub(r"\s+", "", text or "")
+
+
+def _zone_texts(doc, page_idx):
+    """取某页的 (边距带文本集合, 正文区文本集合),均为归一化文本。
+
+    pymupdf 坐标**原点左上、y 向下**(与 pdfium 相反),故:
+      顶部带 = y0 <= h*MARGIN_RATIO;底部带 = y1 >= h*(1-MARGIN_RATIO)
+    """
+    page = doc[page_idx]
+    h = float(page.rect.height)
+    zone, body = set(), set()
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        return zone, body
+    for blk in d.get("blocks", []):
+        if blk.get("type") != 0:  # 0=文本块,1=图像块
+            continue
+        for ln in blk.get("lines", []):
+            bbox = ln.get("bbox")
+            if not bbox:
+                continue
+            txt = "".join(sp.get("text", "") for sp in ln.get("spans", [])).strip()
+            if not txt:
+                continue
+            key = _norm(txt)
+            y0, y1 = float(bbox[1]), float(bbox[3])
+            if y0 <= h * MARGIN_RATIO or y1 >= h * (1.0 - MARGIN_RATIO):
+                zone.add(key)
+            else:
+                body.add(key)
+    return zone, body
+
+
+def _detect_hf(doc, page_idxs):
+    """跨页页眉/页脚判定 → 待剥离的归一化文本集合。
+
+    判据(与自研链一致):
+      ① 边距带内**跨页重复** ≥ max(2, ceil(0.6N));或
+      ② 边距带内命中页码/版权正则(出现 ≥1 次即剥)。
+    **额外保守条件**:该文本若**也在正文区独立成行**,则不剥 ——
+    宁可漏剥,不可误杀正文(这是本模块与自研链唯一的差异:
+    自研链在坐标层直接删行,这里只能在文本层按行匹配,必须更保守)。
+
+    ⚠️ **已知局限(有意保留,不要"修"掉它)**:
+    与正文同名的页眉**剥不掉**。实测 textlayer-multi-img 的页眉 "Agent 进化"
+    在正文区也作为标题独立成行 —— 文本层无法区分"哪一次出现是页眉"(没有坐标),
+    若去掉这条保守条件就会**删掉真实标题**。故此条件必须保留;
+    要彻底解决需在坐标层逐行判定(即自研链的做法)。
+    """
+    strip = set()
+    zones = []  # [(zone_set, body_set)]
+    for i in page_idxs:
+        zones.append(_zone_texts(doc, i))
+    usable = [z for z in zones if z[0]]
+    if not usable:
+        return strip
+    n_pages = len(usable)
+    threshold = max(2, int(math.ceil(n_pages * REPEAT_RATIO)))
+    from collections import Counter
+
+    freq = Counter()
+    for z, _b in usable:
+        for k in z:
+            freq[k] += 1
+    candidates = {k for k, c in freq.items() if c >= threshold}
+    # ② 正则候选(边距带内命中即剥)
+    for z, _b in usable:
+        for k in z:
+            if ZONE_LINE_PAT.match(k):
+                candidates.add(k)
+    # 额外保守条件:正文区独立成行者不剥
+    body_all = set()
+    for _z, b in usable:
+        body_all |= b
+    for k in candidates:
+        if k in body_all:
+            continue
+        strip.add(k)
+    return strip
+
+
+def _strip_hf_from_md(page_text, strip_set):
+    """从**单页** md 里删掉归一化后完全等于页眉/页脚的行。返回 (新文本, 剥离数)。"""
+    if not strip_set:
+        return page_text, 0
+    kept, removed = [], 0
+    for ln in page_text.split("\n"):
+        s = ln.strip()
+        if s and _norm(s) in strip_set:
+            removed += 1
+            continue
+        kept.append(ln)
+    return "\n".join(kept), removed
 
 
 def _expand_pages(spec, total):
@@ -76,15 +194,20 @@ def main():
 
         doc = pymupdf.open(pdf)
         total = len(doc)
-        doc.close()
         # v0.7.3 W4-4: 页范围 —— pymupdf4llm 的 pages 是 **0 起** 页号列表
         try:
             sel = _expand_pages(pages_spec, total)
         except ValueError as e:
             sys.stdout = real_stdout
+            doc.close()
             print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
             return 1
         pages_arg = None if sel is None else sorted(n - 1 for n in sel)
+        # v1.0.2: 页眉/页脚检测必须在 **doc.close() 之前**(需要坐标)
+        # MDC_NO_HF_STRIP=1 可关闭剥离(逃生开关 + A/B 对照验证用)
+        page_idxs = pages_arg if pages_arg is not None else list(range(total))
+        hf_strip = set() if os.environ.get("MDC_NO_HF_STRIP") else _detect_hf(doc, page_idxs)
+        doc.close()
         # page_chunks=True: 逐页 chunk → 自行包 <!--PAGE:NN--> 锚点(与自研链协议一致)
         chunks = pymupdf4llm.to_markdown(pdf, page_chunks=True, pages=pages_arg)
         # 锚点必须用**原始页号**:子集提取时 enumerate 会把第 5 页错编成 01
@@ -95,9 +218,13 @@ def main():
                                                % (len(nos), len(chunks))}, ensure_ascii=False))
             return 1
         parts = []
+        hf_removed = 0
         for idx, c in enumerate(chunks):
             real = (nos[idx] + 1) if idx < len(nos) else (idx + 1)
             text = (c.get("text") or "").strip()
+            # v1.0.2: 逐页剥离页眉/页脚(必须在包锚点**之前**,只动本页内容)
+            text, rm = _strip_hf_from_md(text, hf_strip)
+            hf_removed += rm
             parts.append(f"<!--PAGE:{real:02d}-->\n\n{text}\n\n<!--/PAGE:{real:02d}-->")
         md = "\n\n".join(parts)
         if not md.strip():
@@ -108,6 +235,8 @@ def main():
             "pages": len(chunks),
             "total_pages": total,
             "chars": len(md),
+            "hf_stripped": hf_removed,
+            "hf_patterns": sorted(hf_strip)[:12],
         }
         sys.stdout = real_stdout
         print(json.dumps({"ok": True, "md": md, "notes": notes}, ensure_ascii=False))
