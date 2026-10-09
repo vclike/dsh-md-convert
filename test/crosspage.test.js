@@ -67,17 +67,35 @@ test("tryMergeCrossPage: 末行是全空占位行 → 拒绝(无内容可接)", 
 	assert.equal(tryMergeCrossPage(blank.split("\n"), p2body.split("\n")), null);
 });
 
-test("mergeCrossPageTables: 分隔行减少、锚点保留、被切断内容不丢", () => {
+test("mergeCrossPageTables: 每页表格结构完整 + 被切断内容不丢", () => {
 	const md = [mkPage(1, p1body), mkPage(2, p2body), mkPage(3, "第三页普通内容")].join("\n\n");
-	const before = (md.match(/^\|\s*:?-{2,}/gm) ?? []).length;
 	const r = mergeCrossPageTables(md);
 	assert.equal(r.merged, 1);
-	assert.equal((r.md.match(/^\|\s*:?-{2,}/gm) ?? []).length, before - 1, "两表应合一");
 	assert.ok(r.md.includes("<!--PAGE:01-->") && r.md.includes("<!--PAGE:03-->"), "锚点必须保留");
+
+	// 每页的表格块都必须**自带表头 + 分隔行** —— 视觉上每页都印着表头,
+	// 且缺了结构 GFM 会把整块当纯文本(独立 vision 评审抓出的问题)。
+	const blocks = [...r.md.matchAll(/<!--PAGE:(\d+)-->([\s\S]*?)<!--\/PAGE:\1-->/g)];
+	for (const b of blocks) {
+		const hasSep = /^\|\s*:?-{2,}/m.test(b[2]);
+		const hasHead = b[2].split("\n").some((l) => l.trim() === FIXTURE.head);
+		if (hasSep) {
+			assert.ok(hasHead, `p${b[1]} 的表格块缺表头(会被渲染成纯文本)`);
+		}
+	}
+	assert.equal((r.md.match(/^\|\s*:?-{2,}/gm) ?? []).length, 2, "两页各保留自己的表头+分隔行");
+
+	// 被切断的内容一个都不能少
 	const A = cellsOf(FIXTURE.p1rows.at(-1));
 	const B = cellsOf(FIXTURE.p2rows[0]);
 	for (const t of [...A, ...B]) {
 		if (t) assert.ok(r.md.includes(t), `内容不得丢失:${t.slice(0, 14)}`);
+	}
+	// 续页首行已被并入上一页,不应重复出现
+	const firstContinuation = B.find((x) => x !== "");
+	if (firstContinuation) {
+		const n = r.md.split(firstContinuation).length - 1;
+		assert.equal(n, 1, "续页首行只应出现一次(已并入上行,不应残留)");
 	}
 });
 
