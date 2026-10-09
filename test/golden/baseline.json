@@ -3,8 +3,8 @@
 		"ok": true,
 		"code": null,
 		"chain": "pymupdf4llm(段落合并直提)",
-		"chars": 4850,
-		"bodyChars": 4367,
+		"chars": 4795,
+		"bodyChars": 4303,
 		"cjkPer1k": 0,
 		"tables": 0,
 		"tableRows": 0,
@@ -14,14 +14,14 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 16042
+		"ms": 15873
 	},
 	"textlayer-multi-img": {
 		"ok": true,
 		"code": null,
 		"chain": "pymupdf4llm(段落合并直提)",
-		"chars": 6897,
-		"bodyChars": 5910,
+		"chars": 6871,
+		"bodyChars": 5878,
 		"cjkPer1k": 0,
 		"tables": 2,
 		"tableRows": 15,
@@ -31,7 +31,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 10033
+		"ms": 9057
 	},
 	"scan-4p": {
 		"ok": true,
@@ -65,7 +65,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 2356
+		"ms": 1541
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -82,7 +82,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 3595
+		"ms": 3608
 	},
 	"gbk-text": {
 		"ok": true,
@@ -99,14 +99,14 @@
 		"wraps": 2,
 		"wrapPer100": 50,
 		"badTableRows": 0,
-		"ms": 25
+		"ms": 15
 	},
 	"xlsx-defects": {
 		"ok": true,
 		"code": null,
 		"chain": "anytomd",
-		"chars": 312,
-		"bodyChars": 230,
+		"chars": 308,
+		"bodyChars": 226,
 		"cjkPer1k": 0,
 		"tables": 1,
 		"tableRows": 8,
@@ -122,11 +122,11 @@
 		"ok": true,
 		"code": null,
 		"chain": "pymupdf4llm(段落合并直提)",
-		"chars": 3400,
-		"bodyChars": 3180,
+		"chars": 2932,
+		"bodyChars": 2684,
 		"cjkPer1k": 0,
-		"tables": 2,
-		"tableRows": 28,
+		"tables": 3,
+		"tableRows": 29,
 		"headings": 4,
 		"anchors": 3,
 		"qualityScore": 80,
@@ -150,7 +150,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 9,
-		"ms": 74
+		"ms": 47
 	},
 	"dl-tablecell": {
 		"ok": true,
@@ -167,7 +167,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 3,
-		"ms": 50
+		"ms": 33
 	},
 	"dl-lists": {
 		"ok": true,
@@ -184,7 +184,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 86
+		"ms": 42
 	},
 	"dl-headers": {
 		"ok": true,
@@ -201,7 +201,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 47
+		"ms": 40
 	},
 	"dl-hdrftr-firstpage": {
 		"ok": true,
@@ -218,7 +218,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 85
+		"ms": 58
 	},
 	"dl-eastasian-num": {
 		"ok": true,
@@ -235,7 +235,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 90
+		"ms": 51
 	},
 	"dl-word-sample": {
 		"ok": true,
@@ -252,7 +252,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 60
+		"ms": 41
 	},
 	"dl-pdf-4p": {
 		"ok": true,
@@ -269,7 +269,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 547
+		"ms": 563
 	},
 	"dl-pdf-multipage": {
 		"ok": true,
@@ -286,7 +286,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 501
+		"ms": 495
 	},
 	"dl-pdf-table-as-img": {
 		"ok": true,
@@ -303,7 +303,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 436
+		"ms": 416
 	},
 	"dl-pdf-code-formula": {
 		"ok": true,
@@ -320,7 +320,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 457
+		"ms": 458
 	},
 	"zh-omnidocbench": {
 		"ok": true,

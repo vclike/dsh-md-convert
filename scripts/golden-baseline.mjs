@@ -224,12 +224,18 @@ export function metricsOf(r, ms) {
 	// W0-4 零依赖指标(2026-10-09):断行率 + 表结构一致性
 	const wrap = wrapStats(md);
 	const tstat = tableStats(md);
+	// v1.0.2 口径修正: chars/bodyChars 统计前**剔除 HTML 换行标签**。
+	// 理由: `<br>` 是排版标签,不是文档内容。实测修掉 143 处 `<br>` 后
+	//   chars 从 3400 掉到 2948(每个标签 4 字符 × 139),会被判成"内容退化" ——
+	//   **这样的基线会惩罚正确的修复**,而真正该发现的是"内容变少"。
+	//   注意这与之前踩过的"验收判据自身写错"是同一类问题:先把尺子校准,再量东西。
+	const noBr = (s) => String(s ?? "").replace(/<br\s*\/?>/gi, "");
 	return {
 		ok: r.ok === true,
 		code: r.code ?? null,
 		chain: r.chain ?? null,
-		chars: md.length,
-		bodyChars: md.replace(/\s+/g, "").length,
+		chars: noBr(md).length,
+		bodyChars: noBr(md).replace(/\s+/g, "").length,
 		cjkPer1k: Number((cjkSpaceStats(md).per1k ?? 0).toFixed(2)),
 		tables: sep,
 		tableRows: lines.filter((l) => l.trim().startsWith("|")).length,
