@@ -14,7 +14,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 20169
+		"ms": 16042
 	},
 	"textlayer-multi-img": {
 		"ok": true,
@@ -31,7 +31,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 11818
+		"ms": 10033
 	},
 	"scan-4p": {
 		"ok": true,
@@ -65,7 +65,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 2695
+		"ms": 2356
 	},
 	"bigtable-34p": {
 		"ok": true,
@@ -82,7 +82,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 3871
+		"ms": 3595
 	},
 	"gbk-text": {
 		"ok": true,
@@ -99,7 +99,7 @@
 		"wraps": 2,
 		"wrapPer100": 50,
 		"badTableRows": 0,
-		"ms": 24
+		"ms": 25
 	},
 	"xlsx-defects": {
 		"ok": true,
@@ -116,7 +116,24 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 127
+		"ms": 120
+	},
+	"pdf-crosspage-table": {
+		"ok": true,
+		"code": null,
+		"chain": "pymupdf4llm(段落合并直提)",
+		"chars": 3400,
+		"bodyChars": 3180,
+		"cjkPer1k": 0,
+		"tables": 2,
+		"tableRows": 28,
+		"headings": 4,
+		"anchors": 3,
+		"qualityScore": 80,
+		"wraps": 0,
+		"wrapPer100": 0,
+		"badTableRows": 0,
+		"ms": 2859
 	},
 	"dl-word-tables": {
 		"ok": true,
@@ -133,7 +150,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 9,
-		"ms": 71
+		"ms": 74
 	},
 	"dl-tablecell": {
 		"ok": true,
@@ -150,7 +167,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 3,
-		"ms": 46
+		"ms": 50
 	},
 	"dl-lists": {
 		"ok": true,
@@ -167,7 +184,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 72
+		"ms": 86
 	},
 	"dl-headers": {
 		"ok": true,
@@ -184,7 +201,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 70
+		"ms": 47
 	},
 	"dl-hdrftr-firstpage": {
 		"ok": true,
@@ -218,7 +235,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 88
+		"ms": 90
 	},
 	"dl-word-sample": {
 		"ok": true,
@@ -235,7 +252,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 82
+		"ms": 60
 	},
 	"dl-pdf-4p": {
 		"ok": true,
@@ -252,7 +269,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 596
+		"ms": 547
 	},
 	"dl-pdf-multipage": {
 		"ok": true,
@@ -269,7 +286,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 561
+		"ms": 501
 	},
 	"dl-pdf-table-as-img": {
 		"ok": true,
@@ -286,7 +303,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 497
+		"ms": 436
 	},
 	"dl-pdf-code-formula": {
 		"ok": true,
@@ -303,7 +320,7 @@
 		"wraps": 0,
 		"wrapPer100": 0,
 		"badTableRows": 0,
-		"ms": 481
+		"ms": 457
 	},
 	"zh-omnidocbench": {
 		"ok": true,

@@ -43,6 +43,11 @@ export const SAMPLE_CLASSES = [
 	// 覆盖五类 markitdown-node 已知缺陷:合并单元格广播/双层表头压平/
 	// 单元格换行劈表/无缓存值公式 [object Object]/前导空列
 	{ id: "xlsx-defects", file: "xlsx-defects.xlsx", cls: "⑦xlsx结构缺陷", light: true },
+	// ── v1.0.1 跨页表格缺陷(自建样本:公开技术文档抽 3 页 + 字体子集压缩)──
+	// 已知缺陷:文字层链路把跨页大表拆成"每页一张表"(3 个分隔行),
+	// 且续页重复表头、列数漂移。作为 A1 安全合并的回归检测项。
+	// 观测:同一份样本走扫描件 OCR 链路时三页会被正确连成一张表 → 缺陷是文字层特有。
+	{ id: "pdf-crosspage-table", file: "pdf-crosspage-table.pdf", cls: "⑧跨页表格缺陷", light: true },
 
 	// ── v0.7.12 Docling(MIT)补充:Office 细分结构 + 英文 PDF 版式 ──
 	// 实测耗时:docx 29~1102ms(进默认单测);pdf 423~579ms(需 python 进程,走 test:golden)

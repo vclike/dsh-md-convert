@@ -18,6 +18,10 @@
 # v0.7.18:自造 xlsx 缺陷样本(由 scripts/make-xlsx-defect-sample.py 生成,
 # 覆盖合并单元格/双层表头/单元格换行/无缓存值公式/前导空列五类结构缺陷)
 !xlsx-defects.xlsx
+# v1.0.1:跨页表格缺陷样本(由 scripts/make-crosspage-sample.py 从公开技术文档抽 3 页,
+# 保留文字层 + 字体子集压缩至 0.08MB;**缺陷只存在于文字层链路**,
+# 扫描件 OCR 链路会把三页正确连成一张表 —— 这个差异本身就是重要观测)
+!pdf-crosspage-table.pdf
 
 # ── 白名单:用户提供的真实文档(非商用用途样本,已在库)──
 !scan-4p.pdf
