@@ -39,6 +39,10 @@ export const SAMPLE_CLASSES = [
 	{ id: "office-cn-table", file: "office-cn-table.docx", cls: "④Office", light: true },
 	{ id: "bigtable-34p", file: "bigtable-34p.pdf", cls: "⑤大表格", light: false },
 	{ id: "gbk-text", file: "gbk-text.txt", cls: "⑥GBK 文本", light: true },
+	// ── v0.7.18 xlsx 结构缺陷(自造样本,许可自持)──
+	// 覆盖五类 markitdown-node 已知缺陷:合并单元格广播/双层表头压平/
+	// 单元格换行劈表/无缓存值公式 [object Object]/前导空列
+	{ id: "xlsx-defects", file: "xlsx-defects.xlsx", cls: "⑦xlsx结构缺陷", light: true },
 
 	// ── v0.7.12 Docling(MIT)补充:Office 细分结构 + 英文 PDF 版式 ──
 	// 实测耗时:docx 29~1102ms(进默认单测);pdf 423~579ms(需 python 进程,走 test:golden)

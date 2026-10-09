@@ -9,12 +9,15 @@
 
 *
 
-# ── 白名单:自生成的小样本(由 test/make_golden_samples.py 生成,许可自持)──
+# ── 白名单:自生成的小样本(许可自持)──
 !README.md
 !SOURCES.md
 !.gitignore
 !gbk-text.txt
 !office-cn-table.docx
+# v0.7.18:自造 xlsx 缺陷样本(由 scripts/make-xlsx-defect-sample.py 生成,
+# 覆盖合并单元格/双层表头/单元格换行/无缓存值公式/前导空列五类结构缺陷)
+!xlsx-defects.xlsx
 
 # ── 白名单:用户提供的真实文档(非商用用途样本,已在库)──
 !scan-4p.pdf

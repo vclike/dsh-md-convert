@@ -3,6 +3,140 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.0] - 2026-10-09
+
+首个正式版。从 0.7.x 到 1.0.0 完成了四条主线的验证与固化。
+
+### ① 多栏阅读顺序(0.7.15 / W2-8)
+
+- **根因**:`route_page` 恒按 `(y_top, x_left)` 排序,多栏页**逐行穿插**。
+- **实测**(⑱ 12 页真实中文页):列序穿插 **40 次**(p1/p6 各 20)→ 修复后 **0**。
+- `column_ids()` + `order_boxes_by_columns()`:分栏只看**非整宽块**(通栏标题会横跨装订线、
+  把 gutter 盖住,导致永远判成单栏)、排除**贴边间隙**(页边距不是分栏线)、
+  整宽块按 y 单独归位、保守守卫挡住"居中插图"假分栏。
+- **单栏时原样返回原排序,行为完全不变**(有单测锁定)。
+
+### ② 图片进入最终 md(0.7.16 / 0.7.17 / P1-P7)
+
+- **此前图片根本没被提取**(`extractImages: false`)。现在:
+  - 图块坐标透出 + **双面积闸**(扫描件每页就是整页大图,实测 97/97 页 areaRatio=1.0,
+    抽出来等于复制原页面 → 上闸拦掉;装饰件 → 下闸拦掉);
+  - 插图按**页锚点块**注入 md,B1 相对路径;
+  - **断链图片降级为注释**(`E_FIGURE_MISSING`)—— 宁可不引,不可断链;
+  - **vision 自裁剪**:`![简述](crop:<页号>:<x0>,<y0>,<x1>,<y1>)`,从已渲染页面 PNG 裁剪
+    (不重渲染、单子进程批量裁),并把**页面尺寸注入提示词** —— 不告诉模型坐标系,它只能瞎猜坐标。
+- 提示词新增图片规则:**先判"有没有必要保留"**(截图里的表格必须转成 Markdown 表格、
+  装饰件只写省略注释),再判"在哪里"(候选图优先 → 无候选则自裁剪 → 定位不了只写文字);
+  新增"批次自足"规则,禁止跨批补写与"接上页"类衔接语。
+
+### ③ 多 agent 并发 vision(0.7.16 / P4)
+
+- 新增配置:`vision.model`、`vision.maxConcurrency`、`vision.imageMode`、
+  `vision.imageMinArea`、`vision.imageMaxArea`、`vision.pagesThreshold`。
+- **架构约束**:插件无 spawn/delegate 能力,并发由宿主 agent 执行
+  (与 Deep Research / agent team 同一机制)。`plan.orchestration` 给出明确编排指令,
+  且**写进工具结果文本** —— 只有回给宿主的内容才会被执行。
+- 端到端实测:2 个子 agent 并发转写 4 页 → `coverage 4/4`、`findings 0`、
+  批次交界无断裂、标题层级/表格/图片注释全部达标。
+
+### ④ xlsx 结构化转换改走 anytomd(0.7.18)
+
+- markitdown-node 的 `XLSXBackend` 对结构化表格有**四类可复现缺陷**,
+  本次用自造样本做了 A/B 实测:
+
+  | 缺陷 | markitdown | anytomd |
+  |---|---|---|
+  | 单元格内换行 | 裸换行**劈开表格行,渲染器直接崩** | 转 `<br>`,结构完整 |
+  | 无缓存值公式 | **6 处 `[object Object]`** | 空字符串,无垃圾 |
+  | 合并标题 | **重复 4 次** | 只 1 次 |
+  | 双层表头 | 压平成两张互不相干的表 | 两层保留 |
+  | 产物字符 | 334 | 204 |
+
+- anytomd(Apache-2.0,Rust+calamine,WASM 分发)不依赖 Python/.NET/外部运行时。
+- 兜底:anytomd 不可用时退回 markitdown 并**显式 warning**,不静默降级。
+
+### 文字与表格质量(0.7.5-0.7.14)
+
+- **扫描件公式识别从未真正工作**(0.7.14):根因是取懒加载的 `engine.formula`(恒 None),
+  修复为 `engine.formula_engine().predict(...)`。
+- **中文硬换行合并**(0.7.6):段内硬换行 415 处/97 页真实文档 → 0,
+  内容守恒(剔空白与新增注释后**逐字符相同**)。
+- **页眉页脚误杀**(0.7.11):bigtable 剥离 324→53 行,误杀 271→0。
+- **中文行间空格归并**(0.7.5):整册 468 处 → 0。
+
+### 性能
+
+| 场景 | 之前 | 现在 |
+|---|---|---|
+| 97 页真实扫描件 | ~40 分钟 | **6.6 分钟**(0.7.11 实测 397.0s) |
+
+驱动因素:整页一次 OCR(替代逐区域)+ worker 线程钉定(3.1×)。
+
+### 已知限制
+
+1. **报纸/杂志版面**(`other_layout`):块本身横跨两栏,OCR 时就把两栏文字混进同一个块
+   —— **排序之前数据已损坏**,需文章级分段的研究级方案。实测 12 页只判出 2 页多栏,
+   保守规则宁可漏判不错判。
+2. **`.xls`** 仍走 legacy(WPS/Office COM 另存),尚未迁移到 anytomd。
+3. 报纸页读序:块级横跨导致半句孤悬,未修复。
+4. 速度:降低渲染分辨率只快 5.3% 却损失 3% 正文(净负),已否决;
+   worker 4 路 vs 2 路仅 0.99×(无收益)。**单页耗时的瓶颈是每页固定的模型推理,不是像素量。**
+
+### 验证口径
+
+- `node --test` **206/206**
+- `test:py` 3 个自测全 PASS
+- golden **19 类**(含扫描件、中文 OmniDocBench、xlsx 结构缺陷)**无退化**
+- 部署三方字节一致(tgz == dev == 安装副本)
+- DSH 重启后**从安装副本**实测三条主链路:文字层+插图、扫描件本地 OCR、Office,全部正常
+
+## [0.7.18] - 2026-10-09
+
+### Changed(行为变更)
+
+- **xlsx 改走 anytomd 引擎**(Apache-2.0,Rust + calamine,WASM 分发)——
+  起因是 markitdown-node 的 `XLSXBackend` 对**结构化表格**存在四类可复现缺陷。
+  真机实测样本(1 工作表 / 21 处合并 / 135 条公式 / 双层表头 / 6 项测试):
+
+  | 缺陷 | markitdown-node | anytomd |
+  |---|---|---|
+  | 单元格内换行符 | 原样透出,一个表格行被劈成 13 个物理行,**所有渲染器直接崩** | 转 `<br>`,表格结构完整 |
+  | 无缓存值公式 | 掉进 `String(cell)` 兜底,输出 **84 处 `[object Object]`** | 空字符串,无垃圾 |
+  | 合并单元格 | ExcelJS 把值广播到整个跨列,标题**重复 18 次** | empty-fill,值只出现 1 次 |
+  | 双层表头 | 压平成两张互不相干的表 | 两层都保留(第 2 层受管道表格语法限制显示为数据行) |
+  | 前导空列 | 每行多一个 | 无 |
+
+  - 新增 `lib/core/anytomd.js` + `lib/worker/anytomd-worker.cjs`,子进程桥形状
+    与既有 markitdown 双引擎桥同构(`ELECTRON_RUN_AS_NODE=1` 原生 Node 语义)。
+  - **为什么不是进程内**:markitdown-node 的失败点是宿主内
+    `createRequire.resolve.paths` 解析链(CJS require);anytomd 走 ESM import,
+    探针实测**宿主 Electron(Node 24.18.1 / Electron 44)内可直接加载**,
+    但为保持同一形状、避免再次踩宿主解析链,统一走桥。
+  - **兜底**:anytomd 不可用时退回 markitdown(规整单层表头仍可用),
+    并写入显式 warning —— **不静默降级**,否则用户会把 markitdown 的塌陷产物
+    误当成已修复。
+  - 新增错误码 `E_ANYTOMD`(按仓约定**只追加,不修改既有码**)。
+
+### Verified(验证)
+
+- 上游 anytomd 官方 fixture **3/3 与其 golden 逐字节一致**(`sample.xlsx` / `sample.xls` /
+  `sample_unicode.xls`),经插件后内容不变(仅多出插件惯例的标题与 footer)。
+- 探针:宿主 Electron 冷启 27.8ms、热 ~2.0ms,与独立 Node 输出 SHA256 完全相同。
+- 新建 xlsx 回归语料 `corpus/xlsx/`(12 个样本:上游基线 3 + 自建缺口 6 + 真实样本 1),
+  六个缺口夹具行为全部正确。**其中纵向合并此前上游与本地均无任何测试覆盖**。
+- `node --test` **199/199 通过**;`test:golden` **无退化**。
+
+### Known limitations(已知限制)
+
+- `.xls` **仍走 legacy(WPS/Office COM 另存)路径**,未迁到 anytomd。
+  尽管 anytomd 的 calamine 原生支持 .xls(上游两个 .xls fixture 实测均与 golden 一致),
+  迁移会改变失败语义(anytomd 不可用时不再有 legacy 兜底,因 markitdown-node 根本不支持 .xls),
+  属独立产品决策,不在本次范围。
+- 多层表头仍只识别第 1 行为表头 —— **管道 Markdown 表格语法只有一行表头**,
+  第 2 层会被渲染成数据行。这是输出格式的硬限制,非引擎缺陷。
+- `engines` 仍声明 `>=18.0.0`,但 anytomd 的 ESM wasm import 在较老 Node 上不支持;
+  老 Node 上会走兜底退回 markitdown。是否抬到 `>=22` 属打包策略,本次未改。
+
 ## [0.7.17] - 2026-10-09
 
 ### Added(新增能力)
