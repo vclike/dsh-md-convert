@@ -17,15 +17,23 @@ dsh-md-convert — PDF 文字层直提兜底(pypdfium2,v0.6.4 结构增强)
 
 行为开关(默认全开,供 A/B 与安全回退):
   --no-links / --no-headers / --no-headings / --margin <ratio>
-保底路径: 行框/链接任一 API 异常时逐级降级到旧版 get_text_bounded 全文直提,绝不失败。
+  --extract-images <dir>   v0.7.16: 抽出"文中插图"到该目录(相对路径进 md)
+  --image-min-area <ratio> 低于该页面积占比的图视为装饰件,不抽出(默认 0.02)
+  --image-max-area <ratio> 高于该页面积占比的图视为**整页扫描图**,不抽出
+                           (实测:扫描件每页就是一张整页大图,占比 1.0,抽出来毫无意义)
+保底路径: 行框/链接任一 API 异常时逐级降级到旧版全文直提,绝不失败。
 
 stdout 协议(单个 JSON,UTF-8):
-  {"total": 9, "pages": [{"no": 1, "text": "...", "img_ratio": 0.12}, ...], "notes": {...}}
+  {"total": 9, "pages": [{"no": 1, "text": "...", "img_ratio": 0.12,
+    "img_blocks": [{"x0":..,"y0":..,"x1":..,"y1":..,"areaRatio":..,"file":"images/p1_1.png"}],
+    "images": [{"file": "images/p1_1.png", "alt": "...", "areaRatio": 0.08, "x": .., "y": ..}]
+  }], "notes": {...}}
   打不开 PDF: {"ok": false, "error": "..."} 并退出码 1
 """
 import argparse
 import ctypes
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -275,21 +283,73 @@ def _page_true_chars(tp):
     return sum(1 for ch in text if ch and not ch.isspace())
 
 
-def _page_img_ratio(page):
-    """图像对象面积占**页面面积**比(raw 页面对象枚举,零渲染);异常返回 None。
+def _extract_page_images(page, no, out_dir, min_area, max_area, scale=2.0):
+    """抽出本页"文中插图"到 out_dir,返回 [{file,areaRatio,x,y,w,h}]。
 
-    注: 多图层叠加的图像面积会重复计入(偏保守高估,对 visionHints 方向无害);
-    分母取页面面积而非对象面积总和——文本对象框面积会稀释占比(v0.6.4 真机修正)。
+    v0.7.16。两道面积闸(实测得出,不是猜的):
+      - 扫描件 PDF 每页就是**一张整页大图**(实测 97/97 页 areaRatio=1.0)
+        → 抽出来等于把原页面复制一份,毫无意义 → max_area 闸拦掉;
+      - 分隔线/logo/边框等装饰件面积很小 → min_area 闸拦掉。
+    因此只有**面积介于两者之间**的图块才会被抽出。
+    渲染用 pypdfium2(已在依赖内,零新增依赖);任何异常都跳过该图,不影响主流程。
+    """
+    if not out_dir:
+        return []
+    try:
+        page_w, page_h = page.get_size()
+        page_area = float(page_w) * float(page_h)
+        if page_area <= 0:
+            return []
+        # 复用 _page_img_blocks 已枚举好的坐标(避免二次遍历 raw 对象)
+        blocks, _ = _page_img_blocks(page)
+        if not blocks:
+            return []
+        os.makedirs(out_dir, exist_ok=True)
+        # 一次性渲染整页再裁剪,比逐图 render 更快(pdfium 渲染是主要开销)
+        bitmap = page.render(scale=scale)
+        img = bitmap.to_pil().convert("RGB")
+        out = []
+        for i, b in enumerate(blocks, 1):
+            ar = b["areaRatio"]
+            if ar < min_area or ar >= max_area:
+                continue
+            # pdfium 原点左下 → PIL 原点左上
+            x0 = max(0, int(b["x0"] * scale))
+            x1 = min(img.width, int(b["x1"] * scale))
+            y_top = max(0, int((page_h - b["y1"]) * scale))
+            y_bot = min(img.height, int((page_h - b["y0"]) * scale))
+            if x1 - x0 < 8 or y_bot - y_top < 8:  # 太窄/太矮 → 多半是线条碎片
+                continue
+            fname = "p%03d_%02d.png" % (no, i)
+            img.crop((x0, y_top, x1, y_bot)).save(os.path.join(out_dir, fname))
+            out.append({
+                "file": "%s/%s" % (os.path.basename(out_dir.rstrip("/\\")), fname),
+                "areaRatio": ar,
+                "x": b["x0"], "y": b["y1"], "w": b["x1"] - b["x0"], "h": b["y1"] - b["y0"],
+            })
+        return out
+    except Exception:
+        return []
+
+
+def _page_img_blocks(page):
+    """枚举本页图像对象,返回 ([{x0,y0,x1,y1,areaRatio}], 总面积占比)。
+
+    v0.7.16:原`_page_img_ratio` 只累加面积、**丢弃了每个图块的坐标**,
+    导致"把有意义的图片放进 md"无从下手(需要知道图在哪、多大)。
+    这里把图块坐标一并带出,占比仍按原口径(分母=页面面积)计算,保证 visionHints 不变。
+    坐标为 PDF 点(pdfium 原点左下),与 `_page_lines` 同一坐标系。
     """
     if pdfium_c is None:
-        return None
+        return [], None
     try:
-        img_area = 0.0
         w, h = page.get_size()
         page_area = float(w) * float(h)
         if page_area <= 0:
-            return None
+            return [], None
         count = pdfium_c.FPDFPage_CountObjects(page.raw)
+        blocks = []
+        img_area = 0.0
         for i in range(min(count, 4096)):  # 单页对象数保险丝
             obj = pdfium_c.FPDFPage_GetObject(page.raw, i)
             if not obj:
@@ -299,10 +359,26 @@ def _page_img_ratio(page):
             l, b, r, t = ctypes.c_float(), ctypes.c_float(), ctypes.c_float(), ctypes.c_float()
             if not pdfium_c.FPDFPageObj_GetBounds(obj, ctypes.byref(l), ctypes.byref(b), ctypes.byref(r), ctypes.byref(t)):
                 continue
-            img_area += max(0.0, (r.value - l.value)) * max(0.0, (t.value - b.value))
-        return round(min(1.0, img_area / page_area), 3)
+            a = max(0.0, (r.value - l.value)) * max(0.0, (t.value - b.value))
+            img_area += a
+            blocks.append({
+                "x0": round(l.value, 1), "y0": round(b.value, 1),
+                "x1": round(r.value, 1), "y1": round(t.value, 1),
+                "areaRatio": round(a / page_area, 5),
+            })
+        return blocks, round(min(1.0, img_area / page_area), 3)
     except Exception:
-        return None
+        return [], None
+
+
+def _page_img_ratio(page):
+    """图像对象面积占**页面面积**比(raw 页面对象枚举,零渲染);异常返回 None。
+
+    注: 多图层叠加的图像面积会重复计入(偏保守高估,对 visionHints 方向无害);
+    分母取页面面积而非对象面积总和——文本对象框面积会稀释占比(v0.6.4 真机修正)。
+    """
+    _, ratio = _page_img_blocks(page)
+    return ratio
 
 
 def _page_links(doc_raw, page_raw):
@@ -540,6 +616,12 @@ def main():
                     help="只提取指定页(1 起;支持 1-20,25,30-32;空=全部页)。"
                          "锚点保留**原始页号**;越界报错而非静默丢弃")
     ap.add_argument("--margin", type=float, default=MARGIN_RATIO, help="边距带比例(默认 0.12)")
+    # v0.7.16: 文中插图抽取(B1 相对路径落盘)
+    ap.add_argument("--extract-images", default="", help="抽出文中插图到该目录(空=不抽);相对路径将进 md")
+    ap.add_argument("--image-min-area", type=float, default=0.02,
+                    help="图块面积占比低于此值视为装饰件,不抽出(默认 0.02)")
+    ap.add_argument("--image-max-area", type=float, default=0.90,
+                    help="图块面积占比高于此值视为整页扫描图,不抽出(默认 0.90;实测扫描件每页占比=1.0)")
     args = ap.parse_args()
     try:
         pdf = pdfium.PdfDocument(args.pdf)
@@ -730,13 +812,27 @@ def main():
                 text, inlined, foot = _apply_links(text, links)
                 notes["links_inlined"] += inlined
                 notes["links_footnote"] += len(foot)
-        img_ratio = _page_img_ratio(page)
+        img_blocks, img_ratio = _page_img_blocks(page)
+        images = _extract_page_images(
+            page, no, args.extract_images,
+            args.image_min_area, args.image_max_area,
+            # scale 固定 2.0:本脚本原本是纯文字提取、**不带 --scale 参数**
+            # (这里曾误用不存在的 args.ocr_scale)。2.0 与 OCR/vision 渲染口径一致(≈144dpi)。
+            2.0,
+        )
         tables_by_page.append(tables)
         try:
             page_heights.append(float(page.get_size()[1]))
         except Exception:
             page_heights.append(0.0)
-        pages.append({"no": no, "text": text, "img_ratio": img_ratio})
+        # v0.7.16: 同时透出图块坐标 —— "把有意义的图片放进 md"需要知道图在哪、多大。
+        # 坐标为 PDF 点(pdfium 原点左下),与页面尺寸同系,便于下游换算像素裁剪区。
+        entry = {"no": no, "text": text, "img_ratio": img_ratio}
+        if img_blocks:
+            entry["img_blocks"] = img_blocks
+        if images:
+            entry["images"] = images
+        pages.append(entry)
 
     # v0.7.2 W2-5: 跨页切断表候选计数(只观测不合并;实测真实样本 0 处,见 table_extract 注释)
     if table_extract is not None:
