@@ -107,6 +107,42 @@ def main():
         ok = ok and good
         print(("  [OK] " if good else "  [FAIL] ") + name + ("" if good else f"  (got={got2!r} want={want2!r})"))
 
+    # v0.7.15(W2-8) 多栏阅读顺序:纯几何判据,零模型依赖。
+    def bx(x0, y0, x1, y1):
+        return {"coordinate": [x0, y0, x1, y1], "label": "text"}
+
+    PW = 1000.0
+    two = []
+    for i in range(4):
+        two.append(bx(50, 100 + i * 100, 450, 140 + i * 100))
+    for i in range(4):
+        two.append(bx(550, 100 + i * 100, 950, 140 + i * 100))
+    ordered = RO.order_boxes_by_columns(two, PW)
+    ox = [b["coordinate"][0] for b in ordered]
+    oy = [b["coordinate"][1] for b in ordered]
+    ro = [
+        ("双栏: 检出 1 条分栏线", RO.column_ids(two, PW)[1], 1),
+        ("双栏: 左栏全在前 4 位", all(x < 500 for x in ox[:4]), True),
+        ("双栏: 右栏全在后 4 位", all(x > 500 for x in ox[4:]), True),
+        ("双栏: 栏内自上而下", oy[:4] == sorted(oy[:4]), True),
+        ("双栏: 零丢块", len(ordered), len(two)),
+    ]
+    one = [bx(100 + i * 40, 100 + i * 150, 900, 160 + i * 150) for i in range(5)]
+    ro.append(("单栏: 0 条分栏线", RO.column_ids(one, PW)[1], 0))
+    ro.append(("单栏: 顺序与原实现完全一致",
+               [b["coordinate"] for b in RO.order_boxes_by_columns(one, PW)],
+               [b["coordinate"] for b in sorted(one, key=lambda x: (x["coordinate"][1], x["coordinate"][0]))]))
+    # 居中插图(假分栏陷阱):两翼各只有 2 个短块 → 守卫应否决
+    trap = ([bx(400, 100 + i * 60, 600, 140 + i * 60) for i in range(2)]
+            + [bx(60, 400 + i * 60, 300, 440 + i * 60) for i in range(2)]
+            + [bx(700, 400 + i * 60, 940, 440 + i * 60) for i in range(2)])
+    ro.append(("居中插图: 守卫否决假分栏", RO.column_ids(trap, PW)[1], 0))
+
+    for name, got3, want3 in ro:
+        good = got3 == want3
+        ok = ok and good
+        print(("  [OK] " if good else "  [FAIL] ") + name + ("" if good else f"  (got={got3!r} want={want3!r})"))
+
     print("selftest_routing: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 

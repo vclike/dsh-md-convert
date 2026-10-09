@@ -365,6 +365,7 @@ class RoutingOCR:
         sep = "| " + " | ".join(["---"] * width) + " |"
         return "\n".join([lines[0], sep] + lines[1:])
 
+    
     def textbox_to_md(self, crop, depth=0):
         """单列表格(文本框) → 递归内部版面分析; 深度上限 3 防死循环"""
         sub = self.layout.predict(np.array(crop))
@@ -393,7 +394,9 @@ class RoutingOCR:
             self.begin_page(img_pil)
             own_page = True
         parts = []
-        for b in sorted(boxes, key=lambda x: (x["coordinate"][1], x["coordinate"][0])):
+        # v0.7.15(W2-8):多栏按栏阅读,不再逐行穿插。order_boxes_by_columns 在
+        # 非多栏时原样返回 (y, x) 排序,**单栏页行为完全不变**。
+        for b in order_boxes_by_columns(boxes, img_pil.width):
             label = b["label"]
             rx1, ry1, rx2, ry2 = [int(v) for v in b["coordinate"]]
             pad = adaptive_pad(b, boxes) if label in ROUTE_TEXT_ALL else 5
@@ -497,3 +500,118 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+def column_ids(boxes, page_w, min_band_ratio=0.03):
+    """按 x 投影的空白带把块分栏(XY-cut 的简化版:只做竖直切分)。
+
+    返回 (每个块的列号, 有效切分条数)。**刻意保守** —— 误判会把单栏页打散,
+    故要求每一列都"像一栏":至少 3 个块且纵向跨度 >= 内容区 40%,
+    这一条专门挡住"居中插图"造成的假分栏(图文混排 ≠ 分栏排版)。
+    """
+    if len(boxes) < 4 or page_w <= 0:
+        return [0] * len(boxes), 0
+    # 分栏只看**非整宽**块。实测(⑱ 样本 p1):页面存在通栏标题/分隔元素,若把它们算进
+    # x 投影,装订线(gutter)会被横跨元素盖住 -> 一个空隙都找不到 -> 永远判成单栏
+    # (第一版就是这样,12 页全部判成单栏,修复等于没生效)。
+    narrow = [b for b in boxes if (b["coordinate"][2] - b["coordinate"][0]) < 0.6 * page_w]
+    if len(narrow) < 4:
+        return [0] * len(boxes), 0
+    spans = [(b["coordinate"][0], b["coordinate"][2]) for b in narrow]
+    top = min(b["coordinate"][1] for b in narrow)
+    bot = max(b["coordinate"][3] for b in narrow)
+    content_h = max(1.0, bot - top)
+    cov = [0] * 1000
+    for x0, x1 in spans:
+        a = max(0, min(999, int(x0 / page_w * 1000)))
+        b = max(0, min(999, int(x1 / page_w * 1000)))
+        for i in range(a, b + 1):
+            cov[i] = 1
+    # 扫描零覆盖连续段。用显式 while,不用"哨兵 + elif"的写法 ——
+    # 后者在实测中会漏掉整条装订线(同一份 cov,两种写法结果不同),导致永远判成单栏。
+    bands = []
+    i = 0
+    while i < 1000:
+        if cov[i] == 0:
+            j = i
+            while j + 1 < 1000 and cov[j + 1] == 0:
+                j += 1
+            bands.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    # **贴边的间隙是页边距,不是分栏线**。实测(⑱ p1):零覆盖间隙有 5 条,其中
+    # 6.6% 的那条才是装订线,而 4.7% 的那条是右侧页边距 —— 若不排除,它会被当成
+    # "第三条栏",因块数不足触发守卫,导致**整页被判成单栏**(修复等于失效)。
+    bands = [g for g in bands if g[0] > 5 and g[1] < 994]
+    cuts = [(g[0] + g[1]) / 2.0 / 1000.0 for g in bands if (g[1] - g[0]) / 1000.0 >= min_band_ratio]
+    if not cuts:
+        return [0] * len(boxes), 0
+    bounds = [0.0] + cuts + [1.0]
+    # 覆盖图只用非整宽块算,但**列号必须赋给全部块**(含整宽块)——
+    # 否则 cols 与 boxes 长度不等,调用方 zip 会错位(第一版的坑)。
+    cols = []
+    for b in boxes:
+        x0, x1 = b["coordinate"][0], b["coordinate"][2]
+        cx = (x0 + x1) / 2.0 / page_w
+        idx = 0
+        for j in range(len(bounds) - 1):
+            if bounds[j] <= cx < bounds[j + 1]:
+                idx = j
+                break
+        cols.append(idx)
+    # 守卫只看**非整宽块**分成的列:整宽块(通栏标题/页脚)不参与"像不像一栏"的判断
+    for c in set(cols):
+        ys = [boxes[i]["coordinate"] for i, cc in enumerate(cols)
+              if cc == c and (boxes[i]["coordinate"][2] - boxes[i]["coordinate"][0]) < 0.6 * page_w]
+        if len(ys) < 3:
+            return [0] * len(boxes), 0
+        if (max(y[3] for y in ys) - min(y[1] for y in ys)) < 0.4 * content_h:
+            return [0] * len(boxes), 0
+    return cols, len(cuts)
+
+
+def order_boxes_by_columns(boxes, page_w):
+    """阅读顺序:多栏按"栏内自上而下、栏间自左向右";单栏保持原有 (y, x) 排序。
+
+    v0.7.15(W2-8):原实现恒按 (y_top, x_left) 排序,多栏页会**逐行穿插**
+    (第1栏第1行 -> 第2栏第1行 -> 第1栏第2行 …)。实测 ⑱ 样本 12 页里 9 页是多栏、
+    列序穿插 41 次;报纸页出现"子。我国持证种子企业…"这种半句孤悬。
+
+    整宽元素(通栏标题/页脚)单独处理:按 y 归入"内容区之前/之后",
+    否则它们会被塞进 0 号列,使页脚跑到最前面。
+    """
+    if len(boxes) <= 1:
+        return list(boxes)
+
+    def plain(xs):
+        return sorted(xs, key=lambda x: (x["coordinate"][1], x["coordinate"][0]))
+
+    cols, ncuts = column_ids(boxes, page_w)
+    if ncuts == 0:
+        return plain(boxes)
+    full_w = 0.6 * page_w
+    is_full = lambda b: (b["coordinate"][2] - b["coordinate"][0]) >= full_w
+    # body 只含**非整宽**块;整宽块(通栏标题/页脚)另行按 y 归位,否则它们会被
+    # 塞进某一列,使页脚跑到正文中间甚至最前。
+    groups = {}
+    for b, c in zip(boxes, cols):
+        if is_full(b):
+            continue
+        groups.setdefault(c, []).append(b)
+    body = [b for c in sorted(groups) for b in plain(groups[c])]
+    if not body:
+        return plain(boxes)
+    body_top = min(b["coordinate"][1] for b in body)
+    body_bot = max(b["coordinate"][3] for b in body)
+    before, after = [], []
+    for b in boxes:
+        if not is_full(b):
+            continue  # 非整宽 -> 已在 body 里
+        c = b["coordinate"]
+        if c[3] <= body_top:
+            before.append(b)
+        elif c[1] >= body_bot:
+            after.append(b)
+        else:
+            before.append(b)  # 居中的整宽块(通栏标题)按标题处理,排最前
+    return plain(before) + body + plain(after)
