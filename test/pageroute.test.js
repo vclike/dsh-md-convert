@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { computeBatchesForPages, normalizeOnlyPages, makeVisionBrief } from "../lib/core/vision.js";
+import { computeBatchesForPages, normalizeOnlyPages, makeVisionBrief, buildFigureList, renderTemplate } from "../lib/core/vision.js";
 import { visionHintsFromPages, visionHintMessage } from "../lib/core/convert.js";
 import { assemblePlan } from "../lib/core/assemble.js";
 
@@ -45,6 +45,35 @@ test("computeBatchesForPages: 子集升序去重 + batchSize 切段", () => {
 test("computeBatchesForPages: 空输入 → 空数组(不抛错)", () => {
 	assert.deepEqual(computeBatchesForPages([]), []);
 	assert.deepEqual(computeBatchesForPages(null), []);
+});
+
+/* ---------------- buildFigureList(v0.7.16) ---------------- */
+
+test("buildFigureList: 只收本批页号的候选,且用 images/ 相对前缀", () => {
+	const dir = mkdtempSync(join(tmpdir(), "mdc-fig-"));
+	writeFileSync(join(dir, "p001_01.png"), "x");
+	writeFileSync(join(dir, "p001_02.png"), "x");
+	writeFileSync(join(dir, "p002_01.png"), "x"); // 不在本批 → 必须被过滤
+	writeFileSync(join(dir, "readme.txt"), "x"); // 非 png → 必须被过滤
+	const out = buildFigureList([1], dir, true);
+	assert.match(out, /images\/p001_01\.png/);
+	assert.match(out, /images\/p001_02\.png/);
+	assert.doesNotMatch(out, /p002_01/, "别批次的图不得出现(会导致臆造/错引用)");
+	assert.doesNotMatch(out, /readme/);
+});
+
+test("buildFigureList: 未启用抽图 / 无候选 → 明确提示而非留空", () => {
+	// 留空会让模型自行编造图片路径;必须给出显式说明。
+	assert.match(buildFigureList([1], "/nonexistent", false), /未抽取/);
+	assert.match(buildFigureList([1], "/nonexistent", true), /无已抽取的插图候选/);
+});
+
+test("renderTemplate: 内置模板严格模式缺变量抛错;自定义模板保持宽松", () => {
+	// strict(内置模板):变量漏传必须炸出来,否则转写 agent 收到残缺提示词却不知情。
+	assert.throws(() => renderTemplate("a {{FIGURE_FILES}} b", {}, { strict: true }), /未提供的变量/);
+	// 宽松(用户自定义模板):既有契约 —— 缺失变量替换为空串,不炸。
+	assert.equal(renderTemplate("a {{CUSTOM}} b", {}), "a  b");
+	assert.equal(renderTemplate("A={{BATCH_ID}} C={{MISSING}}", { BATCH_ID: "b" }), "A=b C=");
 });
 
 /* ---------------- visionHints ---------------- */
