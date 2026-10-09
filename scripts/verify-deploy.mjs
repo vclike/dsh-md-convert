@@ -9,8 +9,17 @@ import { readFileSync, readdirSync, mkdirSync, rmSync, existsSync } from "node:f
 import { pathToFileURL } from "node:url";
 
 const DEV = "D:/WorkSpace/Planing-Workdeck/.tmp/dsh-md-convert-dev";
-const TGZ = `${DEV}/dsh-md-convert-1.0.1.tgz`;
 const PROFILES = ["desktop", "web"];
+
+// ⚠️ tgz 路径**必须按 package.json 版本推导**,不能硬编码 ——
+// 第一版写死 1.0.1,发 1.0.2 时它悄悄比对了**旧包**,把两侧一致报成"不一致"
+// (dev/安装副本是新哈希,tgz 那列是旧哈希)。靠人记得改版本号 = 迟早出错。
+const PKG = JSON.parse(readFileSync(`${DEV}/package.json`, "utf8"));
+const TGZ = `${DEV}/dsh-md-convert-${PKG.version}.tgz`;
+if (!existsSync(TGZ)) {
+	console.error(`!! 找不到 ${TGZ} —— 请先 npm pack`);
+	process.exit(2);
+}
 
 // ── ① 关键文件哈希三方比对 ──
 const KEY = ["lib/core/crosspage.js", "lib/core/cjk.js", "lib/core/convert.js", "package.json"];
