@@ -90,15 +90,26 @@ def _detect_hf(doc, page_idxs):
     效果:p1 本就无页眉不剥、p3 因正文同名跳过(保留 1 处噪音)、其余 **28 处照剥**。
     仍然保守(绝不误杀),只是不再让个别页的正文牵连其它页的页眉。
     """
-    from collections import Counter
-
-    zones = {}  # {page_idx: (zone_set, body_set)}
+    zones = {}
     for i in page_idxs:
         zones[i] = _zone_texts(doc, i)
+    return detect_hf_from_zones(zones)
+
+
+def detect_hf_from_zones(zones):
+    """**纯函数**(可单测):{页号: (边距带集合, 正文区集合)} → {页号: 待剥集合}。
+
+    拆出来的原因:原实现与 `doc` 对象耦合,无法单测 —— 而这段逻辑本轮**改了 3 次**
+    (全局判据→发现 29 处页眉没剥→改逐页),只靠 golden 的 chars 断言间接兜底。
+    纯函数让"阈值/正则/逐页收口/正文保护"四条判据都能被直接断言。
+    """
+    from collections import Counter
+
     usable = [(i, z, b) for i, (z, b) in zones.items() if z]
     if not usable:
         return {}
     n_pages = len(usable)
+    # ① 跨页重复:≥ max(2, ceil(0.6N))
     threshold = max(2, int(math.ceil(n_pages * REPEAT_RATIO)))
 
     freq = Counter()
@@ -106,13 +117,13 @@ def _detect_hf(doc, page_idxs):
         for k in z:
             freq[k] += 1
     candidates = {k for k, c in freq.items() if c >= threshold}
-    # ② 正则候选(边距带内命中即剥)
+    # ② 正则候选(边距带内命中即剥):页码/版权/第N页/Powered by
     for _i, z, _b in usable:
         for k in z:
             if ZONE_LINE_PAT.match(k):
                 candidates.add(k)
 
-    # 逐页收口:该页边距带有、该页正文区没有 → 只剥该页
+    # ③ 逐页收口:该页边距带有、**该页正文区没有** → 只剥该页(绝不误杀正文)
     per_page = {}
     for i, z, b in usable:
         s = {k for k in candidates if k in z and k not in b}
