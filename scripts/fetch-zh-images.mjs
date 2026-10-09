@@ -14,6 +14,18 @@ const CACHE = "test/golden/.cache";
 const BASE = "https://huggingface.co/datasets/opendatalab/OmniDocBench/resolve/main/";
 const manifest = JSON.parse(readFileSync(`${CACHE}/zh-manifest.json`, "utf8"));
 
+// 防呆:选片清单里**不允许出现重复图片**。
+// 实测:选择器原先只对 765 页全池去重,三轮补充(铺类型 -> 补版式 -> 补表格页)
+// 会再次选到已选过的图 —— 结果 12 页里只有 9 张不同的图,白白多跑 3 页 OCR,
+// 样本代表性也下降。抽样脚本应当**当场**喊出来,而不是让人事后翻 PDF 才发现。
+const names = manifest.map((m) => m.img.split("/").pop());
+const uniq = new Set(names);
+console.log(`清单 ${names.length} 页, 其中不同图片 ${uniq.size} 张${uniq.size < names.length ? "  !! 有重复" : "  OK"}`);
+if (uniq.size < names.length) {
+	console.error("!! 拒绝封装:选片清单存在重复图片(检查 scripts/select-omnidocbench-zh.mjs 的选择内去重)");
+	process.exit(2);
+}
+
 mkdirSync(`${CACHE}/zh-img`, { recursive: true });
 let ok = 0;
 for (const m of manifest) {

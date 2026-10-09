@@ -33,6 +33,11 @@ console.log(`候选 ${PAGES.length} 页 -> 按文件名去重后 ${UNIQ.length} 
 const picked = [];
 const usedSrc = new Set();
 const usedLayout = new Set();
+// **选择过程内也必须查重**。全池去重挡不住"同一张图被多个标注条目引用"的情况:
+// 三轮补充(铺类型 -> 补版式 -> 补表格页)会再次选到已选过的图。
+// 实测(修复前):12 页里只有 9 张不同的图,p1/p6 与 p2/p9 各自重复一次,
+// 白白多跑 3 页 OCR(约 30 秒),且样本代表性下降。
+const usedName = new Set();
 
 // 先按优先级排序:含表格 > 模糊扫描 > 少
 const score = (p) => (p.tables > 0 ? 100 : 0) + (p.fuzzy ? 40 : 0) + Math.min(p.blocks, 40) / 40;
@@ -40,9 +45,12 @@ const pool = [...UNIQ].sort((a, b) => score(b) - score(a));
 
 const tryTake = (p, { requireNewSrc, requireNewLayout }) => {
 	if (picked.length >= WANT) return false;
+	const name = p.img.split("/").pop();
+	if (usedName.has(name)) return false; // 同一张图只取一次
 	if (requireNewSrc && usedSrc.has(p.src)) return false;
 	if (requireNewLayout && usedLayout.has(p.layout)) return false;
 	picked.push(p);
+	usedName.add(name);
 	usedSrc.add(p.src);
 	usedLayout.add(p.layout);
 	return true;
