@@ -7,12 +7,12 @@
   "author": "yakoylp",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yakoylp/dsh-md-convert.git"
+    "url": "git+https://github.com/vclike/dsh-md-convert.git"
   },
   "bugs": {
-    "url": "https://github.com/yakoylp/dsh-md-convert/issues"
+    "url": "https://github.com/vclike/dsh-md-convert/issues"
   },
-  "homepage": "https://github.com/yakoylp/dsh-md-convert#readme",
+  "homepage": "https://github.com/vclike/dsh-md-convert#readme",
   "keywords": [
     "dsh-plugin",
     "dsh",
